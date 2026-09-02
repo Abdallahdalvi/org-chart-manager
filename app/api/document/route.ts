@@ -1,4 +1,5 @@
 import { db } from '@/lib/database';
+import { SITE_ORIGIN } from '@/lib/site-config';
 import { initialDocument } from '@/lib/seed';
 import { documentSchema, evolve, recordEvidence } from '@/lib/organization';
 import { z } from 'zod';
@@ -26,7 +27,7 @@ export async function GET() {
 }
 export async function PUT(request: Request) {
   const origin = request.headers.get('origin');
-  if (!origin || origin !== new URL(request.url).origin)
+  if (!origin || ![new URL(request.url).origin, SITE_ORIGIN].includes(origin))
     return Response.json(
       { error: 'Same-origin requests required.' },
       { status: 403 },

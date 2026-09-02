@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { SITE_ORIGIN } from '@/lib/site-config';
 import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
 
@@ -13,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL('http://localhost:3000'),
+  metadataBase: new URL(SITE_ORIGIN),
   title: 'Ubiqedge | People & Structure',
   description:
     'An editable organizational chart workspace for people, reporting lines, HR validation, and controlled exports.',
