@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import { prepareChange } from '../lib/changes';
-import { documentSchema, normalize } from '../lib/organization';
+import {
+  documentControlEntries,
+  documentSchema,
+  normalize,
+} from '../lib/organization';
 import type { OrgDocument } from '../lib/model';
 import type { WorkspaceSession } from '../lib/access';
 import { AccessError } from './access-auth';
@@ -20,9 +24,39 @@ export function authorizedChange(
 ): OrgDocument {
   if (session.mode !== 'cloudflare') return prepareChange(current, body);
   const actor = session.email;
-  if (body.action === 'save' || body.action === 'restore') {
+  if (
+    body.action === 'save' ||
+    body.action === 'restore' ||
+    body.action === 'document-control' ||
+    body.action === 'reset-document-control'
+  ) {
     requirePermission(session.canEdit);
+    if (body.action === 'reset-document-control')
+      return prepareChange(current, { ...body, actor });
     const next = documentSchema.parse(body.document);
+    if (body.action === 'document-control' && !session.canManageApprovers) {
+      const existing = new Map(
+        documentControlEntries(current).map((entry) => [entry.contentId, entry]),
+      );
+      for (const entry of documentControlEntries(next)) {
+        const prior = existing.get(entry.contentId);
+        const approvalFields = [
+          'validatedBy',
+          'validatedDate',
+          'approvedBy',
+          'approvalDate',
+        ] as const;
+        if (
+          approvalFields.some(
+            (field) => (prior?.[field] || '') !== (entry[field] || ''),
+          )
+        )
+          throw new AccessError(
+            'Only HR full access can edit validation or approval fields.',
+            403,
+          );
+      }
+    }
     if (
       body.action === 'save' &&
       JSON.stringify(

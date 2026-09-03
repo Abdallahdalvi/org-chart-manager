@@ -12,6 +12,8 @@
     "start:selfhost": "node --env-file=.env.selfhost selfhost-dist/server/server.mjs",
     "test:selfhost": "tsx tests/selfhost.test.ts",
     "test:access": "tsx tests/access.test.ts",
+    "test:exports": "tsx tests/export-options.test.ts",
+    "test:versioning": "tsx tests/versioning.test.ts",
     "start": "wrangler dev --config dist/server/wrangler.json",
     "lint": "oxlint",
     "format": "oxfmt",

@@ -3,7 +3,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Building2,
   Network,
   Users,
   Layers3,
@@ -12,13 +11,9 @@ import {
   Plus,
   Download,
   Search,
-  ChevronDown,
-  ChevronUp,
   ShieldCheck,
   AlertTriangle,
   CheckCircle2,
-  Minus,
-  Maximize2,
   RefreshCw,
   FolderOpen,
   ArrowRight,
@@ -42,12 +37,7 @@ import {
   TableCell,
 } from '@/components/ui/table';
 import { emptyDocument } from '@/lib/empty-document';
-import {
-  initials,
-  departmentColor,
-  type Employee,
-  type OrgDocument,
-} from '@/lib/model';
+import { initials, type Employee, type OrgDocument } from '@/lib/model';
 import {
   activeForest,
   issuesFor,
@@ -59,20 +49,23 @@ import { download, filename } from '@/lib/exports';
 import { EmployeeEditor } from './employee-editor';
 import { ImportDialog } from './import-dialog';
 import { ExportDialog } from './export-dialog';
-import { DocumentControl } from './document-control';
+import { DocumentTable } from './document-table';
+import { directManagerLabel } from '@/lib/leadership';
+import { HierarchyChart } from './hierarchy-chart';
+import type { ChartDirection } from '@/lib/chart-layout';
 import { Departments } from './departments';
-import { AccessReview } from './access-review';
 import { legacySession, type WorkspaceSession } from '@/lib/access';
 type Page =
   | 'Organization chart'
   | 'Employees'
   | 'Departments'
   | 'Change log'
-  | 'Review & approval';
+  | 'Document control';
 const navigation = [
   { icon: Network, label: 'Organization chart' },
   { icon: Users, label: 'Employees' },
   { icon: Layers3, label: 'Departments' },
+  { icon: ShieldCheck, label: 'Document control' },
   { icon: History, label: 'Change log' },
 ] as const;
 export default function Workspace({
@@ -95,6 +88,7 @@ export default function Workspace({
     [notice, setNotice] = useState(''),
     [search, setSearch] = useState(''),
     [department, setDepartment] = useState(''),
+    [direction, setDirection] = useState<ChartDirection>('vertical'),
     [statusFilter, setStatusFilter] = useState('Active'),
     [editing, setEditing] = useState<{
       employee: Employee;
@@ -112,7 +106,6 @@ export default function Workspace({
     stateRef = useRef({ doc, page, canEdit });
   stateRef.current = { doc, page, canEdit };
   const issues = useMemo(() => issuesFor(doc), [doc]),
-    status = approvalStatus(doc),
     { all } = activeForest(doc),
     departments = [...new Set(all.map((e) => e.department))].sort(),
     functionalCount = all.reduce((n, e) => n + e.functionalIds.length, 0);
@@ -269,7 +262,12 @@ export default function Workspace({
       actorInput.current?.focus();
       return false;
     }
-    if (['save', 'restore'].includes(String(payload.action)) && !canEdit) {
+    if (
+      ['save', 'restore', 'document-control', 'reset-document-control'].includes(
+        String(payload.action),
+      ) &&
+      !canEdit
+    ) {
       setError('Your account cannot edit or restore this chart.');
       return false;
     }
@@ -313,6 +311,10 @@ export default function Workspace({
   }
   const save = (next: OrgDocument, description: string) =>
     persist({ action: 'save', document: next, description });
+  const saveDocumentControl = (next: OrgDocument, description: string) =>
+    persist({ action: 'document-control', document: next, description });
+  const resetDocumentControlRegister = () =>
+    persist({ action: 'reset-document-control' });
   function updateActor(value: string) {
     if (verified) return;
     setActor(value);
@@ -368,12 +370,7 @@ export default function Workspace({
         </div>
         <div className="nav-label">WORKSPACE</div>
         <nav>
-          {[
-            ...navigation,
-            ...(verified
-              ? [{ icon: ShieldCheck, label: 'Review & approval' } as const]
-              : []),
-          ].map(({ icon: Icon, label }) => (
+          {navigation.map(({ icon: Icon, label }) => (
             <button
               key={label}
               className={page === label ? 'active' : ''}
@@ -444,24 +441,14 @@ export default function Workspace({
             Workspace <span className="slash">/</span> <strong>{page}</strong>
           </span>
           <div className="top-meta">
-            <span
-              className={'status-dot ' + (status.approved ? 'approved' : '')}
-            />
-            <span>
-              {status.approved
-                ? 'Approved'
-                : status.hr
-                  ? 'HR validated'
-                  : 'Draft'}{' '}
-              · v{doc.version}
-            </span>
+            <span>Version {doc.version}</span>
             {verified ? (
               <div className="signed-in-identity">
                 <span>
                   <strong>{session.email}</strong>
                   <small>
                     {session.roles
-                      .map((r) => (r === 'hr' ? 'HR reviewer' : r))
+                      .map((r) => (r === 'hr' ? 'Full access' : r))
                       .join(' · ')}
                   </small>
                 </span>
@@ -531,8 +518,8 @@ export default function Workspace({
                   ? 'One employee record. Always connected to the right team.'
                   : page === 'Departments'
                     ? 'A clear purpose for every team.'
-                    : page === 'Review & approval'
-                      ? 'Review the current version and sign in with the right permissions.'
+                    : page === 'Document control'
+                      ? 'Edit the document details included in your downloads.'
                       : 'Who changed what, when—with previous versions kept safely.'}
             </p>
           </div>
@@ -588,13 +575,17 @@ export default function Workspace({
           </button>
         </div>
         {page === 'Organization chart' && (
-          <Chart
+          <HierarchyChart
+            key={loaded ? 'loaded' : 'loading'}
+            direction={direction}
+            onDirection={setDirection}
             doc={doc}
             search={search}
             setSearch={setSearch}
             department={department}
             setDepartment={setDepartment}
             onEdit={(e) => setEditing({ employee: e, isNew: false })}
+            canExport={loaded && !busy}
             canEdit={canEdit}
             onExport={() => setExportOpen(true)}
             onDirectory={() => navigate('Employees')}
@@ -674,10 +665,7 @@ export default function Workspace({
                       <TableCell>{e.title || 'Not supplied'}</TableCell>
                       <TableCell>{e.department || 'Not supplied'}</TableCell>
                       <TableCell>
-                        {doc.employees.find((p) => p.id === e.managerId)
-                          ?.name ||
-                          e.managerReference ||
-                          (e.rootConfirmed ? 'Top level' : 'Not confirmed')}
+                        {directManagerLabel(doc, e)}
                         {e.functionalIds.length > 0 && (
                           <small className="functional-text">
                             Functional:{' '}
@@ -732,7 +720,7 @@ export default function Workspace({
         )}
         {page === 'Departments' && (
           <Departments
-            key={doc.version}
+            key={revision}
             doc={doc}
             busy={busy || !loaded || !canEdit}
             canEdit={canEdit}
@@ -745,14 +733,16 @@ export default function Workspace({
             }}
           />
         )}
-        {page === 'Review & approval' && verified && (
-          <AccessReview
-            key={doc.version + doc.evidence.length}
+        {page === 'Document control' && (
+          <DocumentTable
+            key={revision}
             doc={doc}
-            session={session}
+            canEdit={canEdit}
+            canManageApprovals={!!session?.canManageApprovers}
             busy={busy || !loaded}
-            error={error}
-            onAction={persist}
+            onSave={save}
+            onSaveControl={saveDocumentControl}
+            onResetRegister={resetDocumentControlRegister}
           />
         )}
         {page === 'Change log' && (
@@ -760,7 +750,11 @@ export default function Workspace({
             <section className="surface">
               <div className="section-title">
                 <h3>Revision history</h3>
-                <Button variant="outline" onClick={() => setExportOpen(true)}>
+                <Button
+                  variant="outline"
+                  disabled={!loaded || busy}
+                  onClick={() => setExportOpen(true)}
+                >
                   <Download size={15} />
                   Export register
                 </Button>
@@ -844,31 +838,6 @@ export default function Workspace({
                 </p>
               )}
             </details>
-            {!verified && (
-              <details className="surface hr-details">
-                <summary>
-                  HR validation & approvals{' '}
-                  <span className="muted">
-                    Required by HR · expand when ready
-                  </span>
-                </summary>
-                <p className="muted">
-                  HR requested these records in sections 5 and 6. They do not
-                  stop you editing or downloading a draft. New changes need
-                  fresh validation; previous evidence is retained.
-                </p>
-                <DocumentControl
-                  key={doc.version + doc.evidence.length}
-                  doc={doc}
-                  actor={actor}
-                  busy={busy || !loaded}
-                  onSave={save}
-                  onEvidence={(e) =>
-                    persist({ action: 'evidence', evidence: e })
-                  }
-                />
-              </details>
-            )}
           </div>
         )}
         <div className="workspace-footer">
@@ -916,7 +885,11 @@ export default function Workspace({
         />
       )}
       {exportOpen && (
-        <ExportDialog doc={doc} onClose={() => setExportOpen(false)} />
+        <ExportDialog
+          doc={doc}
+          direction={direction}
+          onClose={() => setExportOpen(false)}
+        />
       )}
       {reviewOpen && (
         <Dialog open onOpenChange={(open) => !open && setReviewOpen(false)}>
@@ -961,10 +934,9 @@ export default function Workspace({
               </div>
             )}
             <div className="notice">
-              Current data keeps four executives at separate roots because their
-              source manager is “NA”. The inactive-tab entries for Meer and
-              Shyaan and the incomplete Ashish record are not treated as
-              confirmed active employees.
+              Reporting lines come from the saved employee records and
+              Leadership setup. Records marked Inactive or Needs review are
+              excluded from the active chart.
             </div>
           </DialogContent>
         </Dialog>
@@ -1040,350 +1012,3 @@ const formatDate = (value: string) => {
       })
     : value;
 };
-function Chart({
-  doc,
-  search,
-  setSearch,
-  department,
-  setDepartment,
-  onEdit,
-  onExport,
-  onDirectory,
-  canEdit,
-}: {
-  doc: OrgDocument;
-  search: string;
-  setSearch: (s: string) => void;
-  department: string;
-  setDepartment: (s: string) => void;
-  onEdit: (e: Employee) => void;
-  onExport: () => void;
-  onDirectory: () => void;
-  canEdit: boolean;
-}) {
-  const { all, roots } = useMemo(() => activeForest(doc), [doc]),
-    [expanded, setExpanded] = useState<Set<string>>(new Set()),
-    [zoom, setZoom] = useState(0.9),
-    [functional, setFunctional] = useState(true),
-    [paths, setPaths] = useState<string[]>([]);
-  const canvas = useRef<HTMLDivElement>(null),
-    grid = useRef<HTMLDivElement>(null);
-  const filtered = !!search || !!department;
-  const visible = new Set<string>();
-  for (const e of all)
-    if (
-      (!department || e.department === department) &&
-      `${e.name} ${e.title} ${e.id}`
-        .toLowerCase()
-        .includes(search.toLowerCase())
-    ) {
-      let current: Employee | undefined = e;
-      const seen = new Set<string>();
-      while (current && !seen.has(current.id)) {
-        seen.add(current.id);
-        visible.add(current.id);
-        current = all.find((p) => p.id === current!.managerId);
-      }
-    }
-  const displayedRoots = roots.filter((e) => visible.has(e.id)),
-    rootWidth = Math.max(260, displayedRoots.length * 260 + 10);
-  useEffect(() => {
-    const element = grid.current;
-    if (!element) return;
-    function measure() {
-      if (!functional) {
-        setPaths([]);
-        return;
-      }
-      const root = element!.getBoundingClientRect(),
-        cards = Array.from(
-          element!.querySelectorAll<HTMLElement>('[data-employee]'),
-        );
-      const map = new Map(
-        cards.map((el) => [el.dataset.employee!, el.getBoundingClientRect()]),
-      );
-      const lines: string[] = [];
-      for (const e of all) {
-        const child = map.get(e.id);
-        if (!child) continue;
-        for (const id of e.functionalIds) {
-          const parent = map.get(id);
-          if (!parent) continue;
-          const sx = (parent.right - root.left) / zoom,
-            sy = (parent.top + parent.height / 2 - root.top) / zoom,
-            tx = (child.right - root.left) / zoom,
-            ty = (child.top + child.height / 2 - root.top) / zoom;
-          const bend = Math.max(sx, tx) + 14;
-          lines.push(
-            `M ${sx} ${sy} C ${bend} ${sy}, ${bend} ${ty}, ${tx} ${ty}`,
-          );
-        }
-      }
-      setPaths(lines);
-    }
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    const frame = requestAnimationFrame(measure);
-    return () => {
-      observer.disconnect();
-      cancelAnimationFrame(frame);
-    };
-  }, [doc, all, expanded, zoom, search, department, functional]);
-  function card(e: Employee, head: boolean) {
-    const isMatch =
-      (!department || e.department === department) &&
-      `${e.name} ${e.title} ${e.id}`
-        .toLowerCase()
-        .includes(search.toLowerCase());
-    return (
-      <button
-        data-employee={e.id}
-        className={
-          'person-card ' +
-          (head ? 'executive ' : '') +
-          (filtered && !isMatch ? 'ancestor-card' : '')
-        }
-        style={
-          { '--dept': departmentColor(e.department) } as React.CSSProperties
-        }
-        onClick={() => onEdit(e)}
-        disabled={!canEdit}
-        title={`${canEdit ? 'Edit' : 'View'} ${e.name}`}
-      >
-        <span className="avatar">{initials(e.name)}</span>
-        <span className="person-info">
-          <span className="person-title">{e.title}</span>
-          <strong>{e.name}</strong>
-          <span className="department-tag">{e.department}</span>
-          {head && !e.rootConfirmed && (
-            <span className="root-note">Reporting line to be confirmed</span>
-          )}
-          {functional && e.functionalIds.length > 0 && (
-            <span className="functional-text">
-              ↗{' '}
-              {e.functionalIds
-                .map((id) => doc.employees.find((p) => p.id === id)?.name || id)
-                .join('; ')}
-            </span>
-          )}
-        </span>
-      </button>
-    );
-  }
-  function children(
-    id: string,
-    depth: number,
-    seen: Set<string>,
-  ): React.ReactNode {
-    if (seen.has(id) || depth > 30) return null;
-    const nextSeen = new Set(seen).add(id);
-    const reports = all.filter((e) => e.managerId === id && visible.has(e.id));
-    if (!reports.length) return null;
-    return (
-      <div className="reports">
-        {reports.map((e) => {
-          const count = all.filter((p) => p.managerId === e.id).length;
-          const open = expanded.has(e.id) || filtered;
-          return (
-            <div className="report" key={e.id}>
-              {card(e, false)}
-              {count > 0 && (
-                <button
-                  className="report-count"
-                  onClick={() =>
-                    setExpanded((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(e.id)) next.delete(e.id);
-                      else next.add(e.id);
-                      return next;
-                    })
-                  }
-                  aria-expanded={open}
-                >
-                  {count} direct reports{' '}
-                  {open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                </button>
-              )}
-              {open && children(e.id, depth + 1, nextSeen)}
-            </div>
-          );
-        })}
-      </div>
-    );
-  }
-  const fit = () =>
-    setZoom(
-      Math.max(
-        0.35,
-        Math.min(1, ((canvas.current?.clientWidth || 1000) - 70) / rootWidth),
-      ),
-    );
-  return (
-    <section className="chart-panel">
-      <div className="chart-toolbar">
-        <div className="view-tabs">
-          <button className="selected">
-            <Network size={16} />
-            Hierarchy
-          </button>
-          <button onClick={onDirectory}>
-            <Users size={16} />
-            Directory
-          </button>
-        </div>
-        <div className="chart-tools">
-          <label htmlFor="workspace-field-3" className="search-field">
-            <Search size={15} />
-            <Input
-              id="workspace-field-3"
-              aria-label="Find a person in the chart"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Find a person…"
-            />
-          </label>
-          <NativeSelect
-            aria-label="Chart department filter"
-            value={department}
-            onChange={(e) => setDepartment(e.target.value)}
-          >
-            <option value="">All departments</option>
-            {[...new Set(all.map((e) => e.department))].sort().map((d) => (
-              <option key={d}>{d}</option>
-            ))}
-          </NativeSelect>
-          <Button variant="outline" onClick={onExport}>
-            <Download />
-            Export chart
-          </Button>
-        </div>
-      </div>
-      <div className="chart-options">
-        <label className="check-field">
-          <input
-            type="checkbox"
-            checked={functional}
-            onChange={(e) => setFunctional(e.target.checked)}
-          />
-          Functional reporting
-        </label>
-        <span>
-          {canEdit
-            ? 'Click a person to edit'
-            : 'Read-only chart · editing requires an editor role'}
-        </span>
-        <Button
-          variant="ghost"
-          onClick={() => setExpanded(new Set(all.map((e) => e.id)))}
-        >
-          Expand all
-        </Button>
-        <Button variant="ghost" onClick={() => setExpanded(new Set())}>
-          Collapse teams
-        </Button>
-        <div className="zoom-controls">
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Zoom out"
-            onClick={() => setZoom((z) => Math.max(0.3, z - 0.1))}
-          >
-            <Minus size={14} />
-          </Button>
-          <span>{Math.round(zoom * 100)}%</span>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Zoom in"
-            onClick={() => setZoom((z) => Math.min(1.6, z + 0.1))}
-          >
-            <Plus size={14} />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Fit chart to width"
-            onClick={fit}
-          >
-            <Maximize2 size={14} />
-          </Button>
-        </div>
-      </div>
-      <div className="chart-canvas" ref={canvas}>
-        <div className="chart-title">
-          <span className="company-icon">
-            <Building2 size={21} />
-          </span>
-          <h2>{doc.company}</h2>
-          <p>
-            Organizational structure <span>•</span>{' '}
-            {formatDate(doc.updatedDate)}
-          </p>
-          <span className="draft-label">
-            {approvalStatus(doc).approved
-              ? 'APPROVED COMPANY RECORD'
-              : 'DRAFT · PENDING FINAL APPROVAL'}
-          </span>
-        </div>
-        {displayedRoots.length ? (
-          <div
-            className="chart-scaled"
-            style={{ zoom, width: rootWidth, minWidth: rootWidth }}
-          >
-            <div
-              className="executive-grid"
-              ref={grid}
-              style={{ minWidth: rootWidth }}
-            >
-              <svg className="functional-overlay" aria-hidden="true">
-                {paths.map((path, i) => (
-                  <path
-                    key={i}
-                    d={path}
-                    stroke="#9d86bc"
-                    strokeWidth="1.4"
-                    strokeDasharray="5 5"
-                    fill="none"
-                  />
-                ))}
-              </svg>
-              {displayedRoots.map((e) => (
-                <div className="branch" key={e.id}>
-                  {card(e, true)}
-                  {children(e.id, 0, new Set())}
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div className="empty-state">
-            <Search />
-            <h3>No matching people</h3>
-            <p>Try a different search or department.</p>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setSearch('');
-                setDepartment('');
-              }}
-            >
-              Clear filters
-            </Button>
-          </div>
-        )}
-      </div>
-      <footer className="chart-footer">
-        <span>
-          <i className="line-sample" />
-          Direct reporting <i className="line-sample dashed" />
-          Functional reporting (visible cards)
-        </span>
-        <span>
-          {filtered
-            ? 'Filtered view · ancestors retained for context'
-            : 'Current departments · no October changes applied'}
-        </span>
-      </footer>
-    </section>
-  );
-}

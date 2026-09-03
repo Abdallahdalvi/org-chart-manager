@@ -1,10 +1,18 @@
 'use client';
 import { useState } from 'react';
-import { Layers3, ArrowUpRight } from 'lucide-react';
+import { ArrowUpRight } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
-import { departmentColor, type OrgDocument } from '@/lib/model';
+import type { OrgDocument } from '@/lib/model';
+import {
+  Table,
+  TableHeader,
+  TableHead,
+  TableRow,
+  TableCell,
+  TableBody,
+} from '@/components/ui/table';
 export function Departments({
   doc,
   busy,
@@ -19,7 +27,9 @@ export function Departments({
   canEdit?: boolean;
 }) {
   const [name, setName] = useState(''),
-    [summary, setSummary] = useState('');
+    [summary, setSummary] = useState(''),
+    [newName, setNewName] = useState(''),
+    [newSummary, setNewSummary] = useState('');
   const departments = [
     ...new Set([
       ...doc.employees
@@ -37,55 +47,109 @@ export function Departments({
           do not move employees or change reporting lines automatically.
         </p>
       </div>
-      <div className="department-grid">
-        {departments.map((d) => (
-          <section
-            className="department-card"
-            key={d}
-            style={{ '--dept': departmentColor(d) } as React.CSSProperties}
-          >
-            <div>
-              <span className="department-symbol">
-                <Layers3 size={19} />
-              </span>
-              <span className="pill">
-                {
-                  doc.employees.filter(
-                    (e) => e.status === 'Active' && e.department === d,
-                  ).length
-                }{' '}
-                people
-              </span>
-            </div>
-            <h3>{d}</h3>
-            <p>
-              {doc.functions.find((f) => f.name === d)?.summary ||
-                'Function description awaiting HR input.'}
-            </p>
-            <footer>
-              {canEdit && (
-                <Button
-                  variant="link"
-                  onClick={() => {
-                    setName(d);
-                    setSummary(
-                      doc.functions.find((f) => f.name === d)?.summary || '',
-                    );
-                  }}
-                >
-                  Edit function
-                </Button>
-              )}
-              <Button variant="ghost" onClick={() => onView(d)}>
-                View team <ArrowUpRight size={14} />
-              </Button>
-            </footer>
-          </section>
-        ))}
-      </div>
+      <section className="surface">
+        <Table className="editable-table department-table">
+          <TableHeader>
+            <TableRow>
+              <TableHead>Department</TableHead>
+              <TableHead>People</TableHead>
+              <TableHead>Function / description</TableHead>
+              <TableHead>Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {departments.map((d) => (
+              <TableRow key={d}>
+                <TableCell>
+                  <strong>{d}</strong>
+                </TableCell>
+                <TableCell>
+                  {
+                    doc.employees.filter(
+                      (e) => e.status === 'Active' && e.department === d,
+                    ).length
+                  }
+                </TableCell>
+                <TableCell>
+                  {name === d && canEdit ? (
+                    <Textarea
+                      aria-label={d + ' function'}
+                      value={summary}
+                      maxLength={2000}
+                      rows={5}
+                      onChange={(e) => setSummary(e.target.value)}
+                    />
+                  ) : (
+                    doc.functions.find((f) => f.name === d)?.summary ||
+                    'No description yet'
+                  )}
+                </TableCell>
+                <TableCell>
+                  <div className="table-actions">
+                    {canEdit &&
+                      (name === d ? (
+                        <>
+                          <Button
+                            disabled={busy}
+                            onClick={async () => {
+                              if (
+                                await onSave(
+                                  {
+                                    ...doc,
+                                    functions: [
+                                      ...doc.functions.filter(
+                                        (f) => f.name !== d,
+                                      ),
+                                      { name: d, summary: summary.trim() },
+                                    ],
+                                  },
+                                  'Updated function: ' + d,
+                                )
+                              ) {
+                                setName('');
+                                setSummary('');
+                              }
+                            }}
+                          >
+                            Save
+                          </Button>
+                          <Button
+                            variant="outline"
+                            onClick={() => {
+                              setName('');
+                              setSummary('');
+                            }}
+                          >
+                            Cancel
+                          </Button>
+                        </>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            setName(d);
+                            setSummary(
+                              doc.functions.find((f) => f.name === d)
+                                ?.summary || '',
+                            );
+                          }}
+                        >
+                          Edit
+                        </Button>
+                      ))}
+                    <Button variant="ghost" onClick={() => onView(d)}>
+                      View team <ArrowUpRight size={14} />
+                    </Button>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </section>
       {canEdit && (
         <section className="surface">
-          <h3>Add or edit a function</h3>
+          <h3>Add a department function</h3>
           <form
             className="editor-form"
             onSubmit={async (e) => {
@@ -95,15 +159,15 @@ export function Departments({
                   {
                     ...doc,
                     functions: [
-                      ...doc.functions.filter((f) => f.name !== name.trim()),
-                      { name: name.trim(), summary: summary.trim() },
+                      ...doc.functions.filter((f) => f.name !== newName.trim()),
+                      { name: newName.trim(), summary: newSummary.trim() },
                     ],
                   },
-                  `Updated function definition: ${name.trim()}`,
+                  `Updated function definition: ${newName.trim()}`,
                 )
               ) {
-                setName('');
-                setSummary('');
+                setNewName('');
+                setNewSummary('');
               }
             }}
           >
@@ -112,20 +176,20 @@ export function Departments({
                 Department name
                 <Input
                   id="departments-field-1"
-                  value={name}
+                  value={newName}
                   required
                   maxLength={250}
-                  onChange={(e) => setName(e.target.value)}
+                  onChange={(e) => setNewName(e.target.value)}
                 />
               </label>
               <label htmlFor="departments-field-2">
                 Function / responsibilities
                 <Textarea
                   id="departments-field-2"
-                  value={summary}
+                  value={newSummary}
                   required
                   maxLength={2000}
-                  onChange={(e) => setSummary(e.target.value)}
+                  onChange={(e) => setNewSummary(e.target.value)}
                 />
               </label>
             </div>

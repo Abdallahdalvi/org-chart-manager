@@ -27,6 +27,8 @@ import {
   exportPowerPoint,
 } from '../lib/exports';
 import type { OrgDocument, Evidence } from '../lib/model';
+import { createApp } from '../selfhost/app';
+import { legacySession } from '../lib/access';
 let passed = 0;
 function check(name: string, fn: () => void) {
   fn();
@@ -35,7 +37,7 @@ function check(name: string, fn: () => void) {
 }
 const doc = structuredClone(initialDocument);
 check(
-  'Source reconciles: 53 active, 3 inactive, 3 review; 7 review items',
+  'Source reconciles: 53 active, 3 inactive, 3 review; 3 review items',
   () => {
     assert.equal(doc.employees.length, 59);
     assert.equal(doc.employees.filter((e) => e.status === 'Active').length, 53);
@@ -47,7 +49,11 @@ check(
       doc.employees.filter((e) => e.status === 'Needs review').length,
       3,
     );
-    assert.equal(issuesFor(doc).length, 7);
+    assert.equal(issuesFor(doc).length, 3);
+    assert.equal(doc.governance?.boardName, 'Company Board');
+    assert.equal(doc.employees.find((e) => e.id === '3')?.managerId, '');
+    for (const id of ['1', '2', '4'])
+      assert.equal(doc.employees.find((e) => e.id === id)?.managerId, '3');
     assert.equal(
       doc.employees.reduce((n, e) => n + e.functionalIds.length, 0),
       4,
@@ -313,7 +319,7 @@ check(
       'Test change',
       true,
     );
-    assert.equal(next.version, '0.2');
+    assert.equal(next.version, '0.3');
     assert.equal(approvalStatus(next).approved, false);
     assert.equal(next.validatedBy, '');
     assert.equal(next.approvedBy, '');
@@ -324,8 +330,9 @@ check(
   'Chart includes every active employee exactly once, without overlap',
   () => {
     const l = chartLayout(doc);
-    assert.equal(l.nodes.length, 53);
-    assert.equal(new Set(l.nodes.map((n) => n.employee.id)).size, 53);
+    assert.equal(l.nodes.filter((n) => n.kind === 'employee').length, 53);
+    assert.equal(l.nodes.filter((n) => n.kind === 'board').length, 1);
+    assert.equal(new Set(l.nodes.map((n) => n.employee.id)).size, 54);
     for (const a of l.nodes) {
       assert(a.y + a.height < l.height);
       for (const b of l.nodes) {
@@ -462,7 +469,7 @@ for (const [ext, blob] of [
     const xml = await zip.file(key)!.async('string');
     assert(xml.includes('Hetvi Manish Shah'));
     assert(xml.includes('Visat Subodh Patel'));
-    assert(xml.includes('DRAFT'));
+    assert(!xml.includes('DRAFT'));
     if (ext === 'pptx') assert((xml.match(/<p:sp>/g) || []).length > 53);
   }
   passed++;
@@ -472,38 +479,71 @@ for (const [ext, blob] of [
       ' output opens structurally and includes real chart content',
   );
 }
-const res = await fetch('http://localhost:3000/api/document');
-assert.equal(res.status, 200);
-const data = (await res.json()) as { document: OrgDocument; revision: number };
-assert.equal(data.document.employees.length, 59);
-const invalid = await fetch('http://localhost:3000/api/document', {
-  method: 'PUT',
-  headers: {
-    'Content-Type': 'application/json',
-    Origin: 'http://localhost:3000',
+// Isolate API checks from the user's running workspace and database.
+const testConfig = {
+  origin: 'http://127.0.0.1',
+  clientDir: '.test-output',
+  access: async () => legacySession,
+};
+const testServer = createApp(testConfig, {
+  async load() {
+    return { document: doc, revision: 0 };
   },
-  body: JSON.stringify({
-    action: 'save',
-    revision: data.revision,
-    actor: '',
-    document: data.document,
-    description: 'invalid test',
-  }),
-});
-assert.equal(invalid.status, 400);
-const cross = await fetch('http://localhost:3000/api/document', {
-  method: 'PUT',
-  headers: {
-    'Content-Type': 'application/json',
-    Origin: 'https://untrusted.example',
+  async save() {
+    throw new Error('Invalid test writes must not reach storage');
   },
-  body: '{}',
+  async revisions() {
+    return [];
+  },
+  async snapshot() {
+    return null;
+  },
 });
-assert.equal(cross.status, 403);
-passed++;
-console.log(
-  'PASS API loads saved data, rejects missing audit identity and cross-origin writes',
+await new Promise<void>((resolve) =>
+  testServer.listen(0, '127.0.0.1', resolve),
 );
+const testAddress = testServer.address();
+assert(testAddress && typeof testAddress !== 'string');
+testConfig.origin = 'http://127.0.0.1:' + testAddress.port;
+try {
+  const res = await fetch(testConfig.origin + '/api/document');
+  assert.equal(res.status, 200);
+  const data = (await res.json()) as {
+    document: OrgDocument;
+    revision: number;
+  };
+  assert.equal(data.document.employees.length, 59);
+  const invalid = await fetch(testConfig.origin + '/api/document', {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Origin: testConfig.origin,
+    },
+    body: JSON.stringify({
+      action: 'save',
+      revision: data.revision,
+      actor: '',
+      document: data.document,
+      description: 'invalid test',
+    }),
+  });
+  assert.equal(invalid.status, 400);
+  const cross = await fetch(testConfig.origin + '/api/document', {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Origin: 'https://untrusted.example',
+    },
+    body: '{}',
+  });
+  assert.equal(cross.status, 403);
+  passed++;
+  console.log(
+    'PASS API loads saved data, rejects missing audit identity and cross-origin writes',
+  );
+} finally {
+  await new Promise<void>((resolve) => testServer.close(() => resolve()));
+}
 console.log(
   `\n${passed} checks passed. Test exports in .test-output (ignored by git).`,
 );

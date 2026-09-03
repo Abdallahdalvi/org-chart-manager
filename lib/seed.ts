@@ -2,16 +2,17 @@ import type { OrgDocument } from './model';
 export const initialDocument: OrgDocument = {
   schemaVersion: 1,
   company: 'Ubiqedge',
-  version: '0.1',
+  version: '0.2',
   createdBy: 'Initial source import',
   createdDate: '2026-09-02T12:48:37.125Z',
-  updatedBy: 'Initial source import',
-  updatedDate: '2026-09-02T12:48:37.136Z',
+  updatedBy: 'Requested leadership update',
+  updatedDate: '2026-09-03T00:00:00.000Z',
   validatedBy: '',
   validatedDate: '',
   approvedBy: '',
   approvalDate: '',
   reviewDate: '2026-10-02',
+  governance: { boardName: 'Company Board', ceoId: '3' },
   employees: [
     {
       id: '1',
@@ -19,7 +20,7 @@ export const initialDocument: OrgDocument = {
       alias: 'Hetvi Shah',
       title: 'COO',
       department: 'Management',
-      managerId: '',
+      managerId: '3',
       managerReference: '',
       functionalIds: [],
       functionalReference: '',
@@ -36,7 +37,7 @@ export const initialDocument: OrgDocument = {
       alias: 'Archit Khandelwal',
       title: 'CSO',
       department: 'Management',
-      managerId: '',
+      managerId: '3',
       managerReference: '',
       functionalIds: [],
       functionalReference: '',
@@ -61,7 +62,7 @@ export const initialDocument: OrgDocument = {
       email: 'visat@ubiqedge.com',
       source: 'Active Emp',
       sourceStatus: 'Active',
-      rootConfirmed: false,
+      rootConfirmed: true,
       notes: '',
     },
     {
@@ -70,7 +71,7 @@ export const initialDocument: OrgDocument = {
       alias: 'Akhilesh thorat',
       title: 'CTO',
       department: 'Management',
-      managerId: '',
+      managerId: '3',
       managerReference: '',
       functionalIds: [],
       functionalReference: '',
@@ -1175,6 +1176,13 @@ export const initialDocument: OrgDocument = {
   ],
   evidence: [],
   history: [
+    {
+      version: '0.2',
+      date: '2026-09-03T00:00:00.000Z',
+      by: 'Requested leadership update',
+      description:
+        'Added Company Board governance and confirmed CEO, CTO, COO and CSO reporting hierarchy.',
+    },
     {
       version: '0.1',
       date: '2026-09-02T12:48:37.136Z',

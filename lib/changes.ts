@@ -1,13 +1,23 @@
 import { z } from 'zod';
 import type { OrgDocument } from './model';
-import { documentSchema, evolve, recordEvidence } from './organization';
+import {
+  documentSchema,
+  evolve,
+  recordEvidence,
+  resetDocumentControl,
+  updateDocumentControl,
+} from './organization';
 
 /** Shared validation for the local/Sites and CasaOS storage backends. */
 export function prepareChange(
   current: OrgDocument,
   body: Record<string, unknown>,
 ): OrgDocument {
-  if (!['save', 'restore', 'evidence'].includes(String(body.action)))
+  if (
+    !['save', 'restore', 'evidence', 'document-control', 'reset-document-control'].includes(
+      String(body.action),
+    )
+  )
     throw new Error('Unknown workspace action.');
   const actor = z.string().trim().min(1).max(150).parse(body.actor);
   const next =
@@ -16,7 +26,16 @@ export function prepareChange(
           ...z.record(z.string(), z.unknown()).parse(body.evidence),
           recordedBy: actor,
         } as Parameters<typeof recordEvidence>[1])
-      : evolve(
+      : body.action === 'reset-document-control'
+        ? resetDocumentControl(current, actor)
+        : body.action === 'document-control'
+          ? updateDocumentControl(
+              current,
+              documentSchema.parse(body.document),
+              actor,
+              z.string().trim().min(1).max(2000).parse(body.description),
+            )
+          : evolve(
           current,
           documentSchema.parse(body.document),
           actor,

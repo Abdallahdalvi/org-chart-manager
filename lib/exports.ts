@@ -1,7 +1,16 @@
 import type { OrgDocument } from './model';
-import { departmentColor } from './model';
-import { chartLayout, chartPages, chartPageSvg, wrap } from './chart-layout';
-import { approvalStatus, issuesFor } from './organization';
+import { documentControlEntries } from './organization';
+import { directManagerLabel } from './leadership';
+import { chartLegend, CARD_TEXT, REPORTING_NOTE } from './chart-style';
+import {
+  chartLayout,
+  chartPages,
+  teamChartPages,
+  chartPageSvg,
+  type ChartOptions,
+} from './chart-layout';
+import { issuesFor } from './organization';
+import type { PdfSection } from './pdf-export';
 export function download(
   data: Blob | string,
   name: string,
@@ -15,32 +24,73 @@ export function download(
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
-export const filename = (doc: OrgDocument, suffix: string) =>
-  `${doc.company.replace(/[^a-z0-9-]/gi, '_')}-org-chart-v${doc.version}.${suffix}`;
-export function controlRows(doc: OrgDocument) {
+export const filename = (doc: OrgDocument, suffix: string, custom = '') => {
+  const base = custom
+    .trim()
+    .replace(/\.(pdf|docx|pptx|xlsx|json|svg)$/i, '')
+    .replace(/[<>:"/\\|?*]/g, '_')
+    .split('')
+    .map((c) => (c.charCodeAt(0) < 32 ? '_' : c))
+    .join('')
+    .replace(/[. ]+$/g, '')
+    .slice(0, 120);
+  return `${base || doc.company.replace(/[^a-z0-9-]/gi, '_') + '-org-chart-v' + doc.version}.${suffix}`;
+};
+export const documentControlHeaders = [
+  'Sr. no.',
+  'Version',
+  'Update / change',
+  'Created by',
+  'Created date',
+  'Updated by',
+  'Updated date',
+  'Validated by',
+  'Validated date',
+  'Approved by',
+  'Approval date',
+];
+export const CONTROL_REGISTER_EMPTY_ROWS = 10;
+const displayDate = (value: string) => (value ? value.slice(0, 10) : '');
+/** Register presentation is chronological, while persisted entries stay newest-first. */
+export function controlRows(
+  doc: OrgDocument,
+  emptyRows = CONTROL_REGISTER_EMPTY_ROWS,
+) {
+  const entries = documentControlEntries(doc).slice().reverse();
+  const rows = entries.map((entry, index) => [
+    entry.serialNo || String(index + 1),
+    entry.version,
+    entry.update || '',
+    entry.createdBy || '',
+    displayDate(entry.createdDate),
+    entry.updatedBy || '',
+    displayDate(entry.updatedDate),
+    entry.validatedBy || '',
+    displayDate(entry.validatedDate),
+    entry.approvedBy || '',
+    displayDate(entry.approvalDate),
+  ]);
   return [
-    ['Version', doc.version],
-    [
-      'Status',
-      approvalStatus(doc).approved ? 'Approved' : 'Draft — not approved',
-    ],
-    ['Created by', doc.createdBy],
-    ['Created date', doc.createdDate],
-    ['Updated by', doc.updatedBy],
-    ['Updated date', doc.updatedDate],
-    ['Validated by', doc.validatedBy || 'Pending HR validation'],
-    ['Validated date', doc.validatedDate || 'Pending'],
-    ['Approved by', doc.approvedBy || 'Pending stakeholder approvals'],
-    ['Approval date', doc.approvalDate || 'Pending'],
-    ['Next review', doc.reviewDate || 'Monthly and after significant changes'],
-    ['Review items', String(issuesFor(doc).length)],
-    ['Owner', 'Marketing team'],
-    ['Data validation', 'HR team'],
-    [
-      'Approval evidence',
-      'Recorded references are not digital signatures. Retain original evidence in the official HR archive.',
-    ],
+    ...rows,
+    ...Array.from({ length: emptyRows }, () =>
+      Array.from({ length: documentControlHeaders.length }, () => ''),
+    ),
   ];
+}
+export function departmentRows(doc: OrgDocument) {
+  const names = [
+    ...new Set([
+      ...doc.employees
+        .filter((e) => e.status === 'Active')
+        .map((e) => e.department)
+        .filter(Boolean),
+      ...doc.functions.map((f) => f.name),
+    ]),
+  ].sort();
+  return names.map((name) => [
+    name,
+    doc.functions.find((f) => f.name === name)?.summary || '',
+  ]);
 }
 export function employeeRows(doc: OrgDocument) {
   return doc.employees.map((e) => [
@@ -48,9 +98,7 @@ export function employeeRows(doc: OrgDocument) {
     e.name,
     e.title,
     e.department,
-    doc.employees.find((p) => p.id === e.managerId)?.name ||
-      e.managerReference ||
-      (e.rootConfirmed ? 'Top level confirmed' : 'Not confirmed'),
+    directManagerLabel(doc, e),
     e.functionalIds
       .map((id) => doc.employees.find((p) => p.id === id)?.name || id)
       .join('; '),
@@ -143,7 +191,7 @@ export async function exportExcel(doc: OrgDocument, template = false) {
     ],
   );
   if (!template) {
-    add('Document control', ['Field', 'Value'], controlRows(doc));
+    add('Document control', documentControlHeaders, controlRows(doc));
     add(
       'Change log',
       ['Date', 'Version', 'Description', 'Updated by'],
@@ -235,7 +283,7 @@ export async function exportExcel(doc: OrgDocument, template = false) {
                                 (sh.getColumn(i + 1).width || 30) - 4,
                               ),
                           ) *
-                            15 +
+                            19 +
                           14,
                       )
                   : [38]),
@@ -244,15 +292,15 @@ export async function exportExcel(doc: OrgDocument, template = false) {
       row.eachCell((cell) => {
         cell.font = {
           name: 'Calibri',
-          size: 11,
-          color: { argb: n === 1 ? 'FFFFFFFF' : 'FF304B41' },
+          size: 13,
+          color: { argb: n === 1 ? 'FFFFFFFF' : 'FF12233D' },
           bold: n === 1,
         };
         cell.fill = {
           type: 'pattern',
           pattern: 'solid',
           fgColor: {
-            argb: n === 1 ? 'FF176F62' : n % 2 ? 'FFF2F6F2' : 'FFFFFFFF',
+            argb: n === 1 ? 'FF12233D' : n % 2 ? 'FFF2F6F2' : 'FFFFFFFF',
           },
         };
       });
@@ -262,164 +310,7 @@ export async function exportExcel(doc: OrgDocument, template = false) {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   });
 }
-export async function exportPdf(doc: OrgDocument) {
-  const { jsPDF } = await import('jspdf');
-  const l = chartLayout(doc);
-  const pdf = new jsPDF({
-    unit: 'pt',
-    format: [l.width, l.height],
-    orientation: l.width > l.height ? 'landscape' : 'portrait',
-  });
-  pdf.setTextColor('#176f62');
-  pdf.setFontSize(25);
-  pdf.text(`${doc.company} | Organizational chart`, l.width / 2, 40, {
-    align: 'center',
-  });
-  pdf.setFontSize(12);
-  pdf.setTextColor('#637769');
-  pdf.text(
-    `Version ${doc.version} | ${approvalStatus(doc).approved ? 'APPROVED' : 'DRAFT - NOT APPROVED'} | ${doc.updatedDate.slice(0, 10)}`,
-    l.width / 2,
-    67,
-    { align: 'center' },
-  );
-  pdf.setFontSize(10);
-  pdf.text(
-    'Solid lines: direct reporting. Functional managers are identified on each applicable card.',
-    l.width / 2,
-    90,
-    { align: 'center' },
-  );
-  pdf.text(
-    'Unconfirmed executive reporting lines remain HR review items; no hierarchy is inferred.',
-    l.width / 2,
-    109,
-    { align: 'center' },
-  );
-  for (const n of l.nodes) {
-    const parent = l.nodes.find((p) => p.employee.id === n.employee.managerId);
-    if (parent) {
-      pdf.setDrawColor('#a2b8aa');
-      pdf.line(
-        parent.x + 8,
-        parent.y + parent.height,
-        parent.x + 8,
-        n.y + n.height / 2,
-      );
-      pdf.line(parent.x + 8, n.y + n.height / 2, n.x, n.y + n.height / 2);
-    }
-  }
-  for (const n of l.nodes) {
-    pdf.setFillColor(
-      n.employee.department === 'Management' ? '#f0f5fd' : '#ffffff',
-    );
-    pdf.setDrawColor('#d6e1d8');
-    pdf.roundedRect(n.x, n.y, n.width, n.height, 6, 6, 'FD');
-    pdf.setFillColor(departmentColor(n.employee.department));
-    pdf.rect(n.x, n.y + 7, 3, n.height - 14, 'F');
-    n.lines.forEach((line, i) => {
-      pdf.setFont('helvetica', line.kind === 'name' ? 'bold' : 'normal');
-      pdf.setFontSize(line.kind === 'name' ? 12 : 10);
-      pdf.setTextColor(line.kind === 'functional' ? '#7763a0' : '#345343');
-      pdf.text(line.text.replaceAll('·', '|'), n.x + 13, n.y + 23 + i * 16);
-    });
-  }
-  let y = 0;
-  function page(title: string) {
-    pdf.addPage('a4', 'portrait');
-    pdf.setFont('helvetica', 'bold');
-    pdf.setTextColor('#176f62');
-    pdf.setFontSize(18);
-    pdf.text(title, 35, 40);
-    pdf.setFont('helvetica', 'normal');
-    pdf.setFontSize(9);
-    pdf.text(
-      `${doc.company} | v${doc.version} | ${approvalStatus(doc).approved ? 'Approved' : 'Draft - not approved'}`,
-      35,
-      59,
-    );
-    y = 85;
-  }
-  function textRows(lines: string[]) {
-    for (const str of lines) {
-      const lines = pdf.splitTextToSize(str, 515) as string[];
-      for (const line of lines) {
-        if (y > 785) page('Organizational chart - continued');
-        pdf.setTextColor('#304B41');
-        pdf.setFontSize(10);
-        pdf.text(line, 35, y);
-        y += 14;
-      }
-      y += 7;
-    }
-  }
-  for (const tile of chartPages(doc).pages) {
-    pdf.addPage('a3', 'landscape');
-    pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(19);
-    pdf.setTextColor('#176f62');
-    pdf.text(`${doc.company} | ${tile.title}`, 35, 38);
-    pdf.setFont('helvetica', 'normal');
-    pdf.setFontSize(10);
-    pdf.text(
-      `v${doc.version} | ${approvalStatus(doc).approved ? 'Approved' : 'Draft - not approved'} | Direct and functional managers are named on each card.`,
-      35,
-      62,
-    );
-    for (const n of tile.nodes) {
-      pdf.setFillColor('#ffffff');
-      pdf.setDrawColor('#d6e1d8');
-      pdf.roundedRect(n.x, n.y - 40, n.width, n.height, 6, 6, 'FD');
-      pdf.setFillColor(departmentColor(n.employee.department));
-      pdf.rect(n.x, n.y - 33, 3, n.height - 14, 'F');
-      n.lines.forEach((line, i) => {
-        pdf.setFont('helvetica', line.kind === 'name' ? 'bold' : 'normal');
-        pdf.setFontSize(line.kind === 'name' ? 12 : 10);
-        pdf.setTextColor(line.kind === 'functional' ? '#7763a0' : '#345343');
-        pdf.text(line.text.replaceAll('·', '|'), n.x + 13, n.y - 17 + i * 16);
-      });
-    }
-  }
-  page('Document control');
-  textRows(controlRows(doc).map((r) => r.join(': ')));
-  page('Employee and reporting register');
-  employeeRows(doc).forEach((r) =>
-    textRows([
-      `${r[0]} | ${r[1]} | ${r[2]}`,
-      `${r[3]} | ${r[6]} | Reports to: ${r[4]}${r[5] ? ' | Functional: ' + r[5] : ''}`,
-    ]),
-  );
-  page('Current department functions');
-  textRows(
-    doc.functions.length
-      ? doc.functions.map((f) => `${f.name}: ${f.summary}`)
-      : [
-          'Function descriptions have not yet been supplied by HR. Refer to the employee register for current departments and roles.',
-        ],
-  );
-  page('Required stakeholders & approval evidence');
-  textRows(doc.approvers.map((a) => `${a.person} — ${a.role}`));
-  textRows(
-    doc.evidence.length
-      ? doc.evidence.map(
-          (e) =>
-            `${e.version} | ${e.kind} | ${e.person} | ${e.role} | ${e.date}\nEvidence: ${e.reference}\n${e.note} | Recorded by: ${e.recordedBy}`,
-        )
-      : ['No approval evidence recorded.'],
-  );
-  page('Revision history');
-  textRows(
-    doc.history.map(
-      (h) => `${h.version} | ${h.date} | ${h.by}\n${h.description}`,
-    ),
-  );
-  const issues = issuesFor(doc);
-  if (issues.length) {
-    page('Open HR review items');
-    textRows(issues.map((i) => i.message));
-  }
-  return pdf.output('blob');
-}
+export { exportPdf, preparePdf } from './pdf-export';
 export async function svgToPng(svg: string) {
   const l = new Blob([svg], { type: 'image/svg+xml' }),
     url = URL.createObjectURL(l);
@@ -453,7 +344,12 @@ export async function svgToPng(svg: string) {
 export async function exportWord(
   doc: OrgDocument,
   rasterize: (svg: string) => Promise<Uint8Array> = svgToPng,
+  options: ChartOptions & { sections?: readonly PdfSection[] } = {},
 ) {
+  const selected = new Set<PdfSection>(
+    options.sections || ['chart', 'control', 'departments'],
+  );
+  if (!selected.size) throw new Error('Select at least one report section.');
   const {
     Document,
     Packer,
@@ -466,6 +362,8 @@ export async function exportWord(
     WidthType,
     ImageRun,
     PageOrientation,
+    TableLayoutType,
+    BorderStyle,
   } = await import('docx');
   const heading = (text: string) =>
     new Paragraph({
@@ -473,26 +371,52 @@ export async function exportWord(
       heading: HeadingLevel.HEADING_1,
       spacing: { before: 220, after: 140 },
     });
-  const table = (rows: string[][]) =>
+  const table = (
+    rows: string[][],
+    options: { columnWidths?: number[]; fontSize?: number } = {},
+  ) =>
     new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
+      width: options.columnWidths
+        ? {
+            size: options.columnWidths.reduce((total, width) => total + width, 0),
+            type: WidthType.DXA,
+          }
+        : { size: 100, type: WidthType.PERCENTAGE },
+      columnWidths: options.columnWidths,
+      layout: options.columnWidths ? TableLayoutType.FIXED : undefined,
+      margins: { top: 55, bottom: 55, left: 55, right: 55 },
+      borders: {
+        top: { style: BorderStyle.SINGLE, size: 4, color: '94A3B8' },
+        bottom: { style: BorderStyle.SINGLE, size: 4, color: '94A3B8' },
+        left: { style: BorderStyle.SINGLE, size: 4, color: '94A3B8' },
+        right: { style: BorderStyle.SINGLE, size: 4, color: '94A3B8' },
+        insideHorizontal: {
+          style: BorderStyle.SINGLE,
+          size: 3,
+          color: 'CBD5E1',
+        },
+        insideVertical: { style: BorderStyle.SINGLE, size: 3, color: 'CBD5E1' },
+      },
       rows: rows.map(
         (row, i) =>
           new TableRow({
             tableHeader: i === 0,
             cantSplit: true,
             children: row.map(
-              (text) =>
+              (text, columnIndex) =>
                 new TableCell({
-                  shading: i === 0 ? { fill: '176F62' } : undefined,
+                  width: options.columnWidths
+                    ? { size: options.columnWidths[columnIndex], type: WidthType.DXA }
+                    : undefined,
+                  shading: i === 0 ? { fill: '12233D' } : undefined,
                   children: [
                     new Paragraph({
                       children: [
                         new TextRun({
                           text,
                           bold: i === 0,
-                          color: i === 0 ? 'FFFFFF' : '304B41',
-                          size: 19,
+                          color: i === 0 ? 'FFFFFF' : '12233D',
+                          size: options.fontSize || 26,
                         }),
                       ],
                       spacing: { after: 90 },
@@ -503,7 +427,11 @@ export async function exportWord(
           }),
       ),
     });
-  const sections = chartPages(doc);
+  const sections = chartPages(doc, options);
+  const fullChart = {
+    ...chartLayout(doc, options),
+    title: 'Organizational chart',
+  };
   const chartParagraph = async (page: typeof sections.overview) => {
     const image = await rasterize(chartPageSvg(doc, page)),
       scale = Math.min(950 / page.width, 560 / page.height);
@@ -520,10 +448,13 @@ export async function exportWord(
       ],
     });
   };
-  const chart = await chartParagraph(sections.overview);
-  const detailCharts = [];
-  for (const page of sections.pages)
-    detailCharts.push(
+  const chart = selected.has('chart')
+    ? await chartParagraph(fullChart)
+    : null;
+  const branchCharts = [];
+  if (selected.has('branches'))
+    for (const page of sections.pages)
+      branchCharts.push(
       new Paragraph({
         text: page.title,
         pageBreakBefore: true,
@@ -531,12 +462,39 @@ export async function exportWord(
       }),
       await chartParagraph(page),
     );
+  const sectionHeading = (text: string) =>
+    new Paragraph({
+      text,
+      heading: HeadingLevel.HEADING_1,
+      pageBreakBefore: true,
+      spacing: { before: 220, after: 140 },
+    });
+  const employeeRegister = [
+    [
+      'ID',
+      'Employee / designation',
+      'Department',
+      'Direct manager',
+      'Status',
+    ],
+    ...employeeRows(doc).map((row) => [
+      row[0],
+      row[1] + '\n' + row[2],
+      row[3],
+      row[4],
+      row[6],
+    ]),
+  ];
   const document = new Document({
     creator: doc.updatedBy,
     title: `${doc.company} organizational chart`,
     description:
       'Controlled chart snapshot and editable employee/register tables. Use the web workspace or PowerPoint export to edit chart shapes.',
-    styles: { default: { document: { run: { font: 'Calibri', size: 20 } } } },
+    styles: {
+      default: {
+        document: { run: { font: 'Calibri', size: 26, color: '12233D' } },
+      },
+    },
     sections: [
       {
         properties: {
@@ -547,196 +505,239 @@ export async function exportWord(
         },
         children: [
           heading(`${doc.company} | Organizational chart`),
-          new Paragraph(
-            `Version ${doc.version} — ${approvalStatus(doc).approved ? 'APPROVED' : 'DRAFT — NOT APPROVED'}`,
-          ),
-          chart,
-          ...detailCharts,
-          new Paragraph(
-            'Chart pages are images with explicit reporting references. The following tables are editable. For editable chart shapes, use the PowerPoint export; for the complete working chart, use the JSON master.',
-          ),
-        ],
-      },
-      {
-        properties: {
-          page: { margin: { top: 720, bottom: 720, left: 720, right: 720 } },
-        },
-        children: [
-          heading('Document control'),
-          table([['Field', 'Value'], ...controlRows(doc)]),
-          heading('Employee and reporting register'),
-          ...doc.employees.map((e) =>
-            table([
-              ['Employee', e.name + ' · ' + e.id],
-              ['Designation', e.title],
-              ['Department / status', e.department + ' / ' + e.status],
-              [
-                'Direct manager',
-                doc.employees.find((p) => p.id === e.managerId)?.name ||
-                  e.managerReference ||
-                  (e.rootConfirmed ? 'Top level confirmed' : 'Not confirmed'),
-              ],
-              [
-                'Functional managers',
-                e.functionalIds
-                  .map(
-                    (id) => doc.employees.find((p) => p.id === id)?.name || id,
-                  )
-                  .join('; ') || 'None',
-              ],
-              ['Email', e.email || 'Not supplied'],
-            ]),
-          ),
-          heading('Current functions'),
-          table([
-            ['Department', 'Function'],
-            ...doc.functions.map((f) => [f.name, f.summary]),
-          ]),
-          heading('Required approvers'),
-          table([
-            ['Person', 'Role'],
-            ...doc.approvers.map((a) => [a.person, a.role]),
-          ]),
-          heading('Approval evidence'),
-          table([
-            ['Version / person', 'Approval and evidence'],
-            ...doc.evidence.map((e) => [
-              `${e.version} / ${e.person}`,
-              `${e.kind} · ${e.role} · ${e.date}\n${e.reference}\n${e.note}\nRecorded by: ${e.recordedBy}`,
-            ]),
-          ]),
-          heading('Revision history'),
-          table([
-            ['Version / date', 'Change / recorded by'],
-            ...doc.history.map((h) => [
-              `${h.version} / ${h.date}`,
-              `${h.description}\n${h.by}`,
-            ]),
-          ]),
-          heading('Open HR review items'),
-          ...issuesFor(doc).map((i) => new Paragraph(i.message)),
+          new Paragraph(`Version ${doc.version}`),
+          ...(chart ? [chart] : []),
+          ...branchCharts,
+          ...(selected.has('control')
+            ? [
+                sectionHeading('Document control'),
+                table([documentControlHeaders, ...controlRows(doc)], {
+            // Fixed geometry prevents Word from stretching the 11-column
+            // register into detached pieces when the document is edited.
+                  columnWidths: [470, 640, 2700, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000],
+                  fontSize: 14,
+                }),
+              ]
+            : []),
+          ...(selected.has('departments')
+            ? [
+                sectionHeading('Current department functions'),
+                table([['Department', 'Function / description'], ...departmentRows(doc)]),
+              ]
+            : []),
+          ...(selected.has('employees')
+            ? [
+                sectionHeading('Employee register'),
+                table(employeeRegister, {
+                  columnWidths: [700, 2800, 1900, 2700, 1200],
+                  fontSize: 18,
+                }),
+              ]
+            : []),
+          ...(selected.has('history')
+            ? [
+                sectionHeading('Change log'),
+                table([
+                  ['Version / date', 'Change / updated by'],
+                  ...doc.history.map((h) => [
+                    h.version + '\n' + h.date.slice(0, 10),
+                    h.description + '\n' + h.by,
+                  ]),
+                ]),
+              ]
+            : []),
+          ...(selected.has('issues')
+            ? [
+                sectionHeading('Data review items'),
+                table(
+                  [
+                    ['Employee ID', 'Item'],
+                    ...issuesFor(doc).map((issue) => [
+                      issue.employeeId || '',
+                      issue.message,
+                    ]),
+                  ],
+                  { columnWidths: [1800, 7500], fontSize: 18 },
+                ),
+              ]
+            : []),
         ],
       },
     ],
   });
   return Packer.toBlob(document);
 }
-export async function exportPowerPoint(doc: OrgDocument) {
+export async function exportPowerPoint(
+  doc: OrgDocument,
+  options: ChartOptions = {},
+) {
   const { default: PptxGenJS } = await import('pptxgenjs');
   const pptx = new PptxGenJS();
-  const l = chartLayout(doc);
-  const scale = Math.min(18 / l.width, 45 / l.height);
-  const width = l.width * scale,
-    height = l.height * scale;
-  pptx.defineLayout({ name: 'ORG', width, height });
-  pptx.layout = 'ORG';
+  pptx.layout = 'LAYOUT_WIDE';
   pptx.author = doc.updatedBy;
-  pptx.subject = 'Editable organization chart';
   pptx.title = doc.company + ' organizational chart';
-  let slide = pptx.addSlide();
-  slide.background = { color: 'FBFDF9' };
-  slide.addText(`${doc.company} | Organizational chart`, {
-    x: 0.3,
-    y: 0.2,
-    w: width - 0.6,
-    h: 0.4,
-    fontSize: 22,
-    color: '176F62',
-    bold: true,
-  });
-  slide.addText(
-    `v${doc.version} | ${approvalStatus(doc).approved ? 'APPROVED' : 'DRAFT - NOT APPROVED'} | Functional managers are listed in purple.`,
-    { x: 0.3, y: 0.75, w: width - 0.6, h: 0.35, fontSize: 11, color: '687C71' },
-  );
-  for (const n of l.nodes) {
-    const p = l.nodes.find((q) => q.employee.id === n.employee.managerId);
-    if (p) {
-      slide.addShape(pptx.ShapeType.line, {
-        x: (p.x + 8) * scale,
-        y: (p.y + p.height) * scale,
-        w: 0,
-        h: (n.y + n.height / 2 - p.y - p.height) * scale,
-        line: { color: 'A2B8AA', width: 1 },
-      });
-      slide.addShape(pptx.ShapeType.line, {
-        x: (p.x + 8) * scale,
-        y: (n.y + n.height / 2) * scale,
-        w: (n.x - p.x - 8) * scale,
-        h: 0,
-        line: { color: 'A2B8AA', width: 1 },
-      });
-    }
-  }
-  for (const n of l.nodes) {
-    slide.addShape(pptx.ShapeType.roundRect, {
-      x: n.x * scale,
-      y: n.y * scale,
-      w: n.width * scale,
-      h: n.height * scale,
-      rectRadius: 0.05,
-      fill: {
-        color: n.employee.department === 'Management' ? 'F0F5FD' : 'FFFFFF',
-      },
-      line: { color: 'D6E1D8', width: 1 },
-    });
-    slide.addShape(pptx.ShapeType.rect, {
-      x: n.x * scale,
-      y: (n.y + 7) * scale,
-      w: 3 * scale,
-      h: (n.height - 14) * scale,
-      fill: { color: departmentColor(n.employee.department).slice(1) },
-      line: { transparency: 100 },
-    });
-    n.lines.forEach((line, i) =>
-      slide.addText(line.text, {
-        x: (n.x + 12) * scale,
-        y: (n.y + 10 + i * 16) * scale,
-        w: (n.width - 24) * scale,
-        h: 16 * scale,
-        margin: 0,
-        fontSize: (line.kind === 'name' ? 12 : 10) * scale * 72,
-        bold: line.kind === 'name',
-        color: line.kind === 'functional' ? '7763A0' : '345343',
-        breakLine: false,
-      }),
-    );
-  }
-  const info = [
-    ...controlRows(doc).map((r) => r.join(': ')),
-    ...doc.approvers.map(
-      (a) => 'Required approval: ' + a.person + ' | ' + a.role,
-    ),
-    ...doc.evidence.map(
-      (e) =>
-        `${e.version} | ${e.kind} | ${e.person} | ${e.date} | ${e.reference}`,
-    ),
-    ...doc.history.map(
-      (h) => `${h.version} | ${h.date} | ${h.description} | ${h.by}`,
-    ),
-  ].flatMap((text) => wrap(text, 90));
-  const per = Math.max(12, Math.floor((height - 2) / 0.23));
-  for (let i = 0; i < info.length; i += per) {
-    slide = pptx.addSlide();
-    slide.addText('Document control & revision history', {
+  const width = 13.333,
+    height = 7.5;
+  const full = { ...chartLayout(doc, options), title: 'Organization overview' };
+  for (const [index, l] of [full, ...teamChartPages(doc, options)].entries()) {
+    const slide = pptx.addSlide();
+    slide.background = { color: 'FFFFFF' };
+    slide.addText(l.title, {
       x: 0.4,
-      y: 0.3,
-      w: width - 0.8,
-      h: 0.5,
+      y: 0.15,
+      w: 12.5,
+      h: 0.35,
       fontSize: 22,
-      color: '176F62',
+      bold: true,
+      color: '12233D',
+      margin: 0,
+    });
+    slide.addText(
+      index === 0
+        ? 'Full hierarchy. Following slides show readable, editable team details.'
+        : REPORTING_NOTE,
+      {
+        x: 0.4,
+        y: 0.6,
+        w: 12.5,
+        h: 0.25,
+        fontSize: 12,
+        color: '334155',
+        margin: 0,
+      },
+    );
+    const s = Math.min(
+      (width - 0.8) / l.width,
+      (height - 1.4) / Math.max(280, l.height - l.top),
+    );
+    const px = (x: number) => 0.4 + x * s,
+      py = (y: number) => 1 + (y - l.top) * s;
+    for (const c of l.connections)
+      for (let i = 1; i < c.points.length; i++) {
+        const [x1, y1] = c.points[i - 1],
+          [x2, y2] = c.points[i];
+        slide.addShape(pptx.ShapeType.line, {
+          x: px(Math.min(x1, x2)),
+          y: py(Math.min(y1, y2)),
+          w: Math.abs(x2 - x1) * s,
+          h: Math.abs(y2 - y1) * s,
+          line: {
+            color: '64748B',
+            width: 1.2,
+          },
+        });
+      }
+    for (const n of l.nodes) {
+      slide.addShape(pptx.ShapeType.roundRect, {
+        x: px(n.x),
+        y: py(n.y),
+        w: n.width * s,
+        h: n.height * s,
+        rectRadius: 0.05,
+        fill: { color: n.fill.slice(1) },
+        line: { color: n.color.slice(1), width: 0.6 },
+      });
+      slide.addShape(pptx.ShapeType.rect, {
+        x: px(n.x),
+        y: py(n.y + 5),
+        w: 6 * s,
+        h: (n.height - 10) * s,
+        fill: { color: n.color.slice(1) },
+        line: { transparency: 100 },
+      });
+      for (const line of n.lines)
+        slide.addText(line.text, {
+          x: px(n.x + 20),
+          y: py(n.y + line.y - line.size),
+          w: (n.width - 40) * s,
+          h: (line.size + 6) * s,
+          margin: 0,
+          fontSize: line.size * s * 72,
+          bold: line.kind === 'name',
+          color: CARD_TEXT.slice(1),
+          align: 'left',
+          breakLine: false,
+          valign: 'top',
+        });
+    }
+    slide.addText(`${doc.company} | v${doc.version}`, {
+      x: 0.4,
+      y: 7.15,
+      w: 12,
+      h: 0.2,
+      fontSize: 10,
+      color: '334155',
+      margin: 0,
+    });
+  }
+  for (const [title, rows] of [
+    [
+      'Department color legend',
+      [
+        ['Color', 'Meaning'],
+        ...chartLegend(doc).map((e) => [e.color, e.label]),
+        [
+          'Light fill',
+          'Has direct reports (including collapsed or hidden teams)',
+        ],
+        ['White fill', 'No active direct reports'],
+      ],
+    ],
+    ['Document control', [documentControlHeaders, ...controlRows(doc)]],
+    [
+      'Current department functions',
+      [['Department', 'Function'], ...departmentRows(doc)],
+    ],
+    [
+      'Change log',
+      [
+        ['Version / date', 'Change / updated by'],
+        ...doc.history.map((h) => [
+          h.version + ' / ' + h.date.slice(0, 10),
+          h.description + ' / ' + h.by,
+        ]),
+      ],
+    ],
+  ] as [string, string[][]][]) {
+    const slide = pptx.addSlide();
+    slide.addText(title, {
+      x: 0.4,
+      y: 0.2,
+      w: 12.5,
+      h: 0.4,
+      fontSize: 22,
+      color: '12233D',
       bold: true,
     });
-    slide.addText(info.slice(i, i + per).join('\n'), {
-      x: 0.4,
-      y: 1,
-      w: width - 0.8,
-      h: height - 1.4,
-      fontSize: 11,
-      color: '345343',
-      margin: 0,
-      breakLine: false,
-      paraSpaceAfter: 6,
-    });
+    slide.addTable(
+      rows.map((row, i) =>
+        row.map((text) => ({
+          text,
+          options: {
+            color: i === 0 ? 'FFFFFF' : '12233D',
+            fill: { color: i === 0 ? '12233D' : 'FFFFFF' },
+            bold: i === 0,
+          },
+        })),
+      ),
+      {
+        x: 0.4,
+        y: 1,
+        w: 12.5,
+        colW:
+          title === 'Document control'
+            ? [0.45, 0.6, 2.2, 1.16, 1.16, 1.16, 1.16, 1.16, 1.16, 1.16, 1.16]
+            : [3, 9.5],
+        fontSize: title === 'Document control' ? 8 : 15,
+        color: '12233D',
+        border: { pt: 0.5, color: '94A3B8' },
+        margin: 0.08,
+        autoPage: true,
+        autoPageRepeatHeader: true,
+        autoPageHeaderRows: 1,
+        autoPageSlideStartY: 0.5,
+      },
+    );
   }
   return (await pptx.write({ outputType: 'blob' })) as Blob;
 }

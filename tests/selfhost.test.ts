@@ -194,7 +194,7 @@ try {
   );
   const state = await store.load();
   assert.equal(state.revision, 2);
-  assert.equal(state.document.version, '0.3');
+  assert.equal(state.document.version, '0.4');
   assert.equal((await store.revisions()).length, 3);
   pass(
     'Two concurrent API edits produce one save, one conflict and no lost update',
@@ -208,7 +208,7 @@ try {
   });
   assert.equal(restore.status, 200);
   assert.equal((await store.load()).document.company, 'Ubiqedge');
-  assert.equal((await store.load()).document.version, '0.4');
+  assert.equal((await store.load()).document.version, '0.5');
   assert.equal(
     (await fetch(base + '/api/revisions?revision=0', { headers: auth })).status,
     200,
@@ -220,6 +220,51 @@ try {
   );
   pass(
     'Master restore creates a fresh version while earlier snapshots remain downloadable',
+  );
+  const restoredState = await store.load();
+  const manualResponse = await put({
+    revision: restoredState.revision,
+    action: 'save',
+    actor: 'Test editor',
+    document: {
+      ...restoredState.document,
+      versionMode: 'manual',
+      version: '2.0',
+    },
+    description: 'Set manual version',
+  });
+  assert.equal(manualResponse.status, 200);
+  const manualState = await store.load();
+  assert.equal(manualState.document.version, '2.0');
+  assert.equal(manualState.document.versionMode, 'manual');
+  const manualEdit = await put({
+    revision: manualState.revision,
+    action: 'save',
+    actor: 'Test editor',
+    document: { ...manualState.document, company: 'Manual version test' },
+    description: 'Edit without increasing manual version',
+  });
+  assert.equal(manualEdit.status, 200);
+  const manualEdited = await store.load();
+  assert.equal(manualEdited.document.version, '2.0');
+  assert.notEqual(
+    manualEdited.document.contentId,
+    manualState.document.contentId,
+  );
+  const sameVersionSnapshots = (await store.revisions()).filter(
+    (s) => s.version === '2.0',
+  );
+  assert.equal(sameVersionSnapshots.length, 2);
+  assert.notEqual(
+    sameVersionSnapshots[0].revision,
+    sameVersionSnapshots[1].revision,
+  );
+  assert.equal(
+    (await store.snapshot(manualState.revision))!.company,
+    'Ubiqedge',
+  );
+  pass(
+    'Manual version persists through API saves; repeated labels keep separate PostgreSQL recovery snapshots without a migration',
   );
   for (let i = 0; i < 20; i++)
     await fetch(base + '/', {

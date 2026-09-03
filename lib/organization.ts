@@ -1,5 +1,11 @@
 import { z } from 'zod';
-import type { Employee, OrgDocument, Evidence } from './model';
+import type {
+  Employee,
+  OrgDocument,
+  Evidence,
+  DocumentControlEntry,
+} from './model';
+import { incrementVersion, manualVersion } from './versioning';
 const s = z.string().max(2000),
   short = z.string().max(250);
 export const employeeSchema = z.object({
@@ -22,6 +28,7 @@ export const employeeSchema = z.object({
 const evidenceSchema = z.object({
   id: short,
   version: short,
+  contentId: z.uuid().optional(),
   kind: z.enum(['HR validation', 'Stakeholder approval']),
   person: short.min(1),
   role: short.min(1),
@@ -30,10 +37,26 @@ const evidenceSchema = z.object({
   note: s,
   recordedBy: short.min(1),
 });
+const documentControlEntrySchema = z.object({
+  contentId: z.string().min(1).max(250),
+  serialNo: short.optional(),
+  version: short,
+  update: s,
+  createdBy: short,
+  createdDate: short,
+  updatedBy: short,
+  updatedDate: short,
+  validatedBy: short,
+  validatedDate: short,
+  approvedBy: s,
+  approvalDate: short,
+});
 export const documentSchema = z.object({
   schemaVersion: z.literal(1),
   company: short.min(1),
   version: short,
+  versionMode: z.enum(['automatic', 'manual']).optional(),
+  contentId: z.uuid().optional(),
   createdBy: short,
   createdDate: short,
   updatedBy: short,
@@ -43,6 +66,17 @@ export const documentSchema = z.object({
   approvedBy: s,
   approvalDate: short,
   reviewDate: short,
+  documentControlHistory: z
+    .array(documentControlEntrySchema)
+    .max(4000)
+    .optional(),
+  governance: z
+    .object({ boardName: short.trim().min(1), ceoId: short.min(1) })
+    .optional(),
+  documentControl: z
+    .array(z.object({ label: short.min(1), value: s }))
+    .max(50)
+    .optional(),
   employees: z.array(employeeSchema).max(500),
   proposals: z.array(z.object({ name: short, roles: s, summary: s })).max(100),
   functions: z.array(z.object({ name: short, summary: s })).max(100),
@@ -93,6 +127,22 @@ export function issuesFor(doc: OrgDocument): Issue[] {
   const issues: Issue[] = [],
     seen = new Set<string>(),
     map = new Map(doc.employees.map((e) => [e.id, e]));
+  if (doc.governance) {
+    const ceo = map.get(doc.governance.ceoId);
+    if (
+      !ceo ||
+      ceo.status !== 'Active' ||
+      ceo.managerId ||
+      ceo.managerReference
+    )
+      issues.push({
+        id: 'governance',
+        employeeId: ceo?.id,
+        severity: 'error',
+        message:
+          'Leadership setup: the CEO must be active and report only to the Board. Update Leadership setup in Document control before changing or deactivating the CEO.',
+      });
+  }
   for (const e of doc.employees) {
     const add = (
       key: string,
@@ -127,7 +177,7 @@ export function issuesFor(doc: OrgDocument): Issue[] {
         'reference',
         `manager “${e.managerReference}” could not be resolved uniquely.`,
       );
-    else if (!e.managerId && !e.rootConfirmed)
+    else if (!e.managerId && !e.rootConfirmed && doc.governance?.ceoId !== e.id)
       add(
         'root',
         'no direct manager provided. Confirm top-level status or assign a manager.',
@@ -157,7 +207,11 @@ export function issuesFor(doc: OrgDocument): Issue[] {
   return issues;
 }
 export const currentEvidence = (doc: OrgDocument) =>
-  doc.evidence.filter((e) => e.version === doc.version);
+  doc.evidence.filter(
+    (e) =>
+      e.version === doc.version &&
+      (doc.contentId ? e.contentId === doc.contentId : !e.contentId),
+  );
 export function approvalStatus(doc: OrgDocument) {
   const current = currentEvidence(doc),
     hr = current.find((e) => e.kind === 'HR validation');
@@ -179,6 +233,122 @@ export function approvalStatus(doc: OrgDocument) {
       !pending.length &&
       !issuesFor(doc).length,
   };
+}
+function legacyControlEntries(doc: OrgDocument): DocumentControlEntry[] {
+  return doc.history.map((history, index) => ({
+    contentId: `legacy-${index}-${history.date}-${history.version}`,
+    serialNo: String(doc.history.length - index),
+    version: history.version,
+    update: history.description,
+    createdBy: doc.createdBy,
+    createdDate: doc.createdDate,
+    updatedBy: history.by,
+    updatedDate: history.date,
+    validatedBy: history.version === doc.version ? doc.validatedBy : '',
+    validatedDate: history.version === doc.version ? doc.validatedDate : '',
+    approvedBy: history.version === doc.version ? doc.approvedBy : '',
+    approvalDate: history.version === doc.version ? doc.approvalDate : '',
+  }));
+}
+export function documentControlEntries(doc: OrgDocument) {
+  return doc.documentControlHistory?.length
+    ? doc.documentControlHistory
+    : legacyControlEntries(doc);
+}
+/**
+ * Stores edits made to the document-control register without changing the
+ * organization chart itself. The first (current) row also drives the document
+ * metadata used by downloads, while each older row remains independently
+ * editable as a historic register entry.
+ */
+export function updateDocumentControl(
+  current: OrgDocument,
+  next: OrgDocument,
+  actor: string,
+  description: string,
+): OrgDocument {
+  if (!actor.trim() || !description.trim())
+    throw new Error('Your name and a change description are required.');
+  const submitted = next.documentControlHistory || [];
+  if (!submitted.length)
+    throw new Error('Keep at least one document-control register row.');
+  const entries = submitted.map((entry) => ({
+    ...entry,
+    contentId: entry.contentId || crypto.randomUUID(),
+    serialNo: entry.serialNo || '',
+  }));
+  const currentRow = entries[0];
+  const result: OrgDocument = {
+    ...current,
+    version: manualVersion(currentRow.version),
+    versionMode: 'manual',
+    createdBy: currentRow.createdBy,
+    createdDate: currentRow.createdDate,
+    updatedBy: currentRow.updatedBy,
+    updatedDate: currentRow.updatedDate,
+    validatedBy: currentRow.validatedBy,
+    validatedDate: currentRow.validatedDate,
+    approvedBy: currentRow.approvedBy,
+    approvalDate: currentRow.approvalDate,
+    documentControlHistory: entries,
+    history: [
+      {
+        version: currentRow.version,
+        date: new Date().toISOString(),
+        by: actor.trim(),
+        description: description.trim(),
+      },
+      ...current.history,
+    ],
+  };
+  return documentSchema.parse(result);
+}
+
+/** Starts a clean controlled register without touching the employee chart. */
+export function resetDocumentControl(
+  current: OrgDocument,
+  actor: string,
+): OrgDocument {
+  if (!actor.trim()) throw new Error('Your name is required.');
+  const now = new Date().toISOString();
+  const entry: DocumentControlEntry = {
+    contentId: crypto.randomUUID(),
+    serialNo: '1',
+    version: '1.0',
+    update: 'Initial controlled register',
+    createdBy: actor.trim(),
+    createdDate: now.slice(0, 10),
+    updatedBy: actor.trim(),
+    updatedDate: now.slice(0, 10),
+    validatedBy: '',
+    validatedDate: '',
+    approvedBy: '',
+    approvalDate: '',
+  };
+  return documentSchema.parse({
+    ...current,
+    version: entry.version,
+    versionMode: 'manual',
+    contentId: entry.contentId,
+    createdBy: entry.createdBy,
+    createdDate: entry.createdDate,
+    updatedBy: entry.updatedBy,
+    updatedDate: entry.updatedDate,
+    validatedBy: '',
+    validatedDate: '',
+    approvedBy: '',
+    approvalDate: '',
+    documentControlHistory: [entry],
+    history: [
+      {
+        version: entry.version,
+        date: now,
+        by: actor.trim(),
+        description: 'Reset document-control register to V1.0.',
+      },
+      ...current.history,
+    ],
+  });
 }
 export function evolve(
   current: OrgDocument,
@@ -202,6 +372,8 @@ export function evolve(
     updatedBy: actor.trim(),
     updatedDate: now,
     version: current.version,
+    versionMode: next.versionMode ?? current.versionMode ?? 'automatic',
+    contentId: current.contentId,
     evidence: current.evidence,
     history: current.history,
     validatedBy: current.validatedBy,
@@ -210,21 +382,105 @@ export function evolve(
     approvalDate: current.approvalDate,
   };
   if (structural) {
-    const [major, minor] = current.version.split('.').map(Number);
-    result.version = `${major || 0}.${(minor || 0) + 1}`;
+    result.version =
+      result.versionMode === 'manual'
+        ? manualVersion(next.version)
+        : incrementVersion(current.version);
+    // A display version may be reused. Evidence must still belong to this exact
+    // saved content, never to an older chart with the same version label.
+    result.contentId = crypto.randomUUID();
     result.validatedBy = '';
     result.validatedDate = '';
     result.approvedBy = '';
     result.approvalDate = '';
   }
+  // Keep untouched audit fields current while preserving explicitly customized
+  // report metadata. These values never grant approval or replace evidence.
+  const auditFields: [
+    string,
+    keyof Pick<
+      OrgDocument,
+      | 'version'
+      | 'createdBy'
+      | 'createdDate'
+      | 'updatedBy'
+      | 'updatedDate'
+      | 'validatedBy'
+      | 'validatedDate'
+      | 'approvedBy'
+      | 'approvalDate'
+      | 'reviewDate'
+    >,
+  ][] = [
+    ['Version', 'version'],
+    ['Created by', 'createdBy'],
+    ['Created date', 'createdDate'],
+    ['Updated by', 'updatedBy'],
+    ['Updated date', 'updatedDate'],
+    ['Validated by', 'validatedBy'],
+    ['Validated date', 'validatedDate'],
+    ['Approved by', 'approvedBy'],
+    ['Approval date', 'approvalDate'],
+    ['Next review', 'reviewDate'],
+  ];
+  if (result.documentControl)
+    result.documentControl = result.documentControl.map((row) => {
+      const field = auditFields.find(([label]) => label === row.label)?.[1];
+      if (!field) return row;
+      const display = (value: string) =>
+        field.endsWith('Date') ? value.slice(0, 10) : value;
+      return row.value === display(current[field])
+        ? { ...row, value: display(result[field]) }
+        : row;
+    });
+  if (result.documentControl)
+    result.documentControl = [
+      { label: 'Version', value: result.version },
+      ...result.documentControl.filter(
+        (row) => normalize(row.label) !== 'version',
+      ),
+    ];
+  const versionChange =
+    structural &&
+    ((current.versionMode || 'automatic') !== result.versionMode ||
+      (result.versionMode === 'manual' && current.version !== result.version))
+      ? ` Version: ${current.version} -> ${result.version}; ${result.versionMode} mode.`
+      : '';
   result.history = [
     {
       version: result.version,
       date: now,
       by: actor.trim(),
-      description: description.trim(),
+      description:
+        description.trim().slice(0, 2000 - versionChange.length) +
+        versionChange,
     },
     ...current.history,
+  ];
+  const update = result.history[0].description;
+  result.documentControlHistory = [
+    {
+      contentId: result.contentId || crypto.randomUUID(),
+      serialNo: String(
+        Math.max(
+          0,
+          ...documentControlEntries(current).map((entry, index) =>
+            Number.parseInt(entry.serialNo || String(documentControlEntries(current).length - index), 10) || 0,
+          ),
+        ) + 1,
+      ),
+      version: result.version,
+      update,
+      createdBy: result.createdBy,
+      createdDate: result.createdDate,
+      updatedBy: result.updatedBy,
+      updatedDate: result.updatedDate,
+      validatedBy: result.validatedBy,
+      validatedDate: result.validatedDate,
+      approvedBy: result.approvedBy,
+      approvalDate: result.approvalDate,
+    },
+    ...documentControlEntries(current),
   ];
   return documentSchema.parse(result);
 }
@@ -232,6 +488,8 @@ export function recordEvidence(
   current: OrgDocument,
   record: Evidence,
 ): OrgDocument {
+  // The caller cannot bind an approval to an arbitrary historic content ID.
+  record = { ...record, contentId: current.contentId };
   evidenceSchema.parse(record);
   if (record.version !== current.version)
     throw new Error('Approval must refer to the current version.');
@@ -272,7 +530,7 @@ export function recordEvidence(
     throw new Error(
       'This approval is already recorded for the current version.',
     );
-  const doc = {
+  const doc: OrgDocument = {
     ...current,
     evidence: [...current.evidence, record],
     updatedBy: record.recordedBy,
@@ -286,6 +544,17 @@ export function recordEvidence(
     doc.approvedBy = doc.approvers.map((a) => a.person).join('; ');
     doc.approvalDate = record.date;
   }
+  doc.documentControlHistory = documentControlEntries(doc).map((entry) =>
+    entry.contentId === doc.contentId
+      ? {
+          ...entry,
+          validatedBy: doc.validatedBy,
+          validatedDate: doc.validatedDate,
+          approvedBy: doc.approvedBy,
+          approvalDate: doc.approvalDate,
+        }
+      : entry,
+  );
   doc.history = [
     {
       version: doc.version,

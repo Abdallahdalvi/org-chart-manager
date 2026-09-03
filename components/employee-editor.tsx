@@ -170,9 +170,14 @@ export function EmployeeEditor({
               <NativeSelect
                 id="employee-editor-field-5"
                 value={form.managerId}
+                disabled={doc.governance?.ceoId === form.id}
                 onChange={(e) => set('managerId', e.target.value)}
               >
-                <option value="">No manager / top level</option>
+                <option value="">
+                  {doc.governance?.ceoId === form.id
+                    ? doc.governance.boardName
+                    : 'No manager / top level'}
+                </option>
                 {managers.map((e) => (
                   <option key={e.id} value={e.id}>
                     {e.name} · {e.title}
@@ -210,7 +215,13 @@ export function EmployeeEditor({
               />
             </label>
           </div>
-          {!form.managerId && (
+          {doc.governance?.ceoId === form.id && (
+            <p className="muted">
+              This CEO reports to {doc.governance.boardName}. Change the Board
+              or CEO in Document control → Leadership setup.
+            </p>
+          )}
+          {!form.managerId && doc.governance?.ceoId !== form.id && (
             <label className="check-field">
               <input
                 type="checkbox"
