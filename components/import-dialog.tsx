@@ -31,6 +31,7 @@ export function ImportDialog({
   onApply,
   busy,
   actor,
+  actorReadOnly = false,
   onActor,
   saveError,
 }: {
@@ -39,6 +40,7 @@ export function ImportDialog({
   onApply: (next: OrgDocument, description: string) => Promise<boolean>;
   busy: boolean;
   actor: string;
+  actorReadOnly?: boolean;
   onActor: (value: string) => void;
   saveError: string;
 }) {
@@ -262,6 +264,7 @@ export function ImportDialog({
               <Input
                 id="import-editor-name"
                 value={actor}
+                readOnly={actorReadOnly}
                 onChange={(e) => onActor(e.target.value)}
                 maxLength={150}
                 placeholder="Your name"

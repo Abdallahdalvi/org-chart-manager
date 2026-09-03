@@ -7,13 +7,16 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { resolve, extname, sep } from 'node:path';
 import { z } from 'zod';
-import { prepareChange } from '../lib/changes';
+import { legacySession, type WorkspaceSession } from '../lib/access';
+import { authorizedChange } from './authorized-change';
+import { AccessError, type AccessAuthenticator } from './access-auth';
 import { StorageError, type Store } from './store';
 
 export type AppConfig = {
   origin: string;
-  username: string;
-  password: string;
+  username?: string;
+  password?: string;
+  access?: AccessAuthenticator;
   clientDir: string;
 };
 const digest = (value: string) => createHash('sha256').update(value).digest();
@@ -53,6 +56,8 @@ async function readBody(req: IncomingMessage) {
     .parse(JSON.parse(Buffer.concat(chunks).toString('utf8')));
 }
 export function createApp(config: AppConfig, store: Store) {
+  if (!config.access && (!config.username || !config.password))
+    throw new Error('An authentication method must be configured.');
   const expected = digest(`${config.username}:${config.password}`);
   const failures = new Map<string, { count: number; until: number }>();
   const clientRoot = resolve(config.clientDir);
@@ -77,40 +82,52 @@ export function createApp(config: AppConfig, store: Store) {
       const url = new URL(req.url || '/', config.origin);
       if (url.pathname === '/healthz' && req.method === 'GET')
         return json(res, 200, { ok: true });
-      const credential = req.headers.authorization || '';
-      const address = req.socket.remoteAddress || 'unknown';
-      const now = Date.now();
-      for (const [ip, record] of failures)
-        if (record.until <= now) failures.delete(ip);
-      const attempt = failures.get(address);
-      if (attempt && attempt.count >= 20) {
-        res.setHeader('Retry-After', '60');
-        return json(res, 429, {
-          error: 'Too many login attempts. Try again in a minute.',
-        });
-      }
-      const supplied = credential.startsWith('Basic ')
-        ? Buffer.from(credential.slice(6), 'base64').toString('utf8')
-        : '';
-      if (!timingSafeEqual(expected, digest(supplied))) {
-        // Deliberately ignore spoofable forwarding headers. Configure proxy rate limiting too.
-        const record = failures.get(address) || {
-          count: 0,
-          until: now + 60000,
-        };
-        if (credential) record.count++;
-        if (failures.size < 1000 || failures.has(address))
-          failures.set(address, record);
-        res.setHeader(
-          'WWW-Authenticate',
-          'Basic realm="Ubiqedge organization chart", charset="UTF-8"',
+      let session: WorkspaceSession;
+      if (config.access) {
+        const token = req.headers['cf-access-jwt-assertion'];
+        // Do not trust the plain email header, cookies, request body, or Basic credentials.
+        session = await config.access(
+          typeof token === 'string' ? token : undefined,
         );
-        return json(res, 401, {
-          error:
-            'Sign in with the username and password configured on your server.',
-        });
+      } else {
+        const credential = req.headers.authorization || '';
+        const address = req.socket.remoteAddress || 'unknown';
+        const now = Date.now();
+        for (const [ip, record] of failures)
+          if (record.until <= now) failures.delete(ip);
+        const attempt = failures.get(address);
+        if (attempt && attempt.count >= 20) {
+          res.setHeader('Retry-After', '60');
+          return json(res, 429, {
+            error: 'Too many login attempts. Try again in a minute.',
+          });
+        }
+        const supplied = credential.startsWith('Basic ')
+          ? Buffer.from(credential.slice(6), 'base64').toString('utf8')
+          : '';
+        if (!timingSafeEqual(expected, digest(supplied))) {
+          // Deliberately ignore spoofable forwarding headers. Configure proxy rate limiting too.
+          const record = failures.get(address) || {
+            count: 0,
+            until: now + 60000,
+          };
+          if (credential) record.count++;
+          if (failures.size < 1000 || failures.has(address))
+            failures.set(address, record);
+          res.setHeader(
+            'WWW-Authenticate',
+            'Basic realm="Ubiqedge organization chart", charset="UTF-8"',
+          );
+          return json(res, 401, {
+            error:
+              'Sign in with the username and password configured on your server.',
+          });
+        }
+        failures.delete(address);
+        session = { ...legacySession, mode: 'basic' };
       }
-      failures.delete(address);
+      if (url.pathname === '/api/session' && req.method === 'GET')
+        return json(res, 200, session);
       if (req.method === 'PUT') {
         if (req.headers.origin !== config.origin)
           throw new RequestError('Same-origin requests required.', 403);
@@ -127,7 +144,7 @@ export function createApp(config: AppConfig, store: Store) {
             'Another edit was saved. Reload before editing; your change was not applied.',
             409,
           );
-        const document = prepareChange(current.document, body);
+        const document = authorizedChange(current.document, body, session);
         if (!(await store.save(revision, document, current.document)))
           throw new RequestError(
             'Another editor saved first. Reload to see the latest chart.',
@@ -186,7 +203,7 @@ export function createApp(config: AppConfig, store: Store) {
       }
       json(
         res,
-        e instanceof RequestError
+        e instanceof RequestError || e instanceof AccessError
           ? e.status
           : e instanceof StorageError
             ? 503

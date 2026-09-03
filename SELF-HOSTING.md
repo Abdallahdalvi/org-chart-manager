@@ -2,6 +2,8 @@
 
 For deployment from the private GitHub repository, use [GITHUB-TO-CASAOS.md](GITHUB-TO-CASAOS.md). This page remains the general configuration reference.
 
+**Current requested setup:** use [CLOUDFLARE-ACCESS.md](CLOUDFLARE-ACCESS.md) for Cloudflare-only sign-in and email-based editor, HR and approver permissions at `orgchart.dalvi.cloud`. The remainder of this page documents the optional legacy shared-password mode; set `APP_AUTH_MODE=basic` explicitly to use it. The new example environment defaults to Cloudflare mode and must not replace your filled-in secrets file.
+
 The app runs in its own container on CasaOS. Records and saved versions live in your existing Supabase at `https://supabase.dalvi.cloud`. It does not depend on Sites, Cloudflare, or a ChatGPT login. Your other Supabase apps and authentication settings do not need to change.
 
 ## Before moving
@@ -26,12 +28,12 @@ If you prefer your server terminal, after copying the project to the server, run
 
 Copy `.env.selfhost.example` to `.env.selfhost` beside `compose.casaos.yaml`, then fill in:
 
-| Setting | Value |
-| --- | --- |
-| `APP_ORIGIN` | The exact HTTPS app address, without a path |
-| `APP_USERNAME` | Your chosen shared login name |
-| `APP_PASSWORD` | A new random password, at least 16 characters |
-| `SUPABASE_URL` | `https://supabase.dalvi.cloud` |
+| Setting                     | Value                                                                                  |
+| --------------------------- | -------------------------------------------------------------------------------------- |
+| `APP_ORIGIN`                | The exact HTTPS app address, without a path                                            |
+| `APP_USERNAME`              | Your chosen shared login name                                                          |
+| `APP_PASSWORD`              | A new random password, at least 16 characters                                          |
+| `SUPABASE_URL`              | `https://supabase.dalvi.cloud`                                                         |
 | `SUPABASE_SERVICE_ROLE_KEY` | The `SERVICE_ROLE_KEY` from your existing Supabase configuration, **not** the anon key |
 
 Leave `SUPABASE_ALLOW_HTTP=false` when using your HTTPS Supabase address. No `VITE_` secret is needed. Never use the Supabase dashboard password as the app password. The template contains no real credentials. Your pasted setup also contained unrelated credentials; rotate exposed secrets separately with care for the apps that depend on them.

@@ -1669,6 +1669,45 @@ table .pill {
     flex-wrap: wrap;
   }
 }
+.signed-in-identity {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+.signed-in-identity strong,
+.signed-in-identity small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.signed-in-identity small {
+  color: var(--muted-foreground);
+  text-transform: capitalize;
+}
+.signed-in-identity a {
+  text-decoration: underline;
+  white-space: nowrap;
+}
+.control-register dd,
+.evidence-row p {
+  overflow-wrap: anywhere;
+}
+.person-card:disabled {
+  cursor: default;
+}
+@media (max-width: 700px) {
+  .signed-in-identity {
+    gap: 7px;
+    font-size: 10px;
+  }
+  .topbar:has(.signed-in-identity) {
+    height: auto;
+    min-height: 65px;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding-block: 10px;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   * {
     scroll-behavior: auto !important;

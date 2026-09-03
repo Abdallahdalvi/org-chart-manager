@@ -42,7 +42,7 @@ export type OrgDocument = {
   employees: Employee[];
   proposals: { name: string; roles: string; summary: string }[];
   functions: { name: string; summary: string }[];
-  approvers: { person: string; role: string }[];
+  approvers: { person: string; role: string; email?: string }[];
   evidence: Evidence[];
   history: { version: string; date: string; by: string; description: string }[];
 };

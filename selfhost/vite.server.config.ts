@@ -9,5 +9,5 @@ export default defineConfig({
       output: { entryFileNames: 'server.mjs', codeSplitting: false },
     },
   },
-  ssr: { noExternal: ['zod'] },
+  ssr: { noExternal: ['zod', 'jose'] },
 });

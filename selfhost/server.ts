@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { createApp } from './app';
 import { supabaseStore } from './store';
+import { createAccessAuthenticator, readAccessConfig } from './access-auth';
 
 function required(name: string) {
   const value = process.env[name];
@@ -43,9 +44,18 @@ if (
   throw new Error(
     'SUPABASE_URL must be the Supabase API origin, without a path.',
   );
-const username = required('APP_USERNAME');
-const password = required('APP_PASSWORD');
-if (username.includes(':') || password.length < 16)
+const mode = process.env.APP_AUTH_MODE || 'basic';
+if (!['basic', 'cloudflare'].includes(mode))
+  throw new Error('APP_AUTH_MODE must be basic or cloudflare.');
+if (mode === 'cloudflare' && origin.protocol !== 'https:')
+  throw new Error('Cloudflare Access requires an HTTPS APP_ORIGIN.');
+const access =
+  mode === 'cloudflare'
+    ? createAccessAuthenticator(readAccessConfig(process.env))
+    : undefined;
+const username = mode === 'basic' ? required('APP_USERNAME') : undefined;
+const password = mode === 'basic' ? required('APP_PASSWORD') : undefined;
+if (mode === 'basic' && (username!.includes(':') || password!.length < 16))
   throw new Error(
     'Use a username without a colon and a password of at least 16 characters.',
   );
@@ -57,13 +67,14 @@ const server = createApp(
     origin: origin.origin,
     username,
     password,
+    access,
     clientDir: fileURLToPath(new URL('../client/', import.meta.url)),
   },
   supabaseStore(database.origin, required('SUPABASE_SERVICE_ROLE_KEY')),
 );
 server.listen(port, process.env.HOST || '0.0.0.0', () =>
   console.log(
-    `Ubiqedge server ready on port ${port}. Database: Supabase. Password protection enabled.`,
+    `Ubiqedge server ready on port ${port}. Database: Supabase. Authentication: ${mode}.`,
   ),
 );
 for (const signal of ['SIGINT', 'SIGTERM'] as const)

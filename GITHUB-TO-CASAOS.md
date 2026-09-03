@@ -4,6 +4,8 @@ Repository: [Abdallahdalvi/org-chart-manager](https://github.com/Abdallahdalvi/o
 
 The direction is: **push code to GitHub → pull code on the server → rebuild the app container**. Excel uploads and employee edits save to Supabase; they do not require a GitHub push or a rebuild.
 
+**For the current Cloudflare-only login with editor/HR/approver roles:** complete the repository and initial database setup in sections 1–3, then follow [CLOUDFLARE-ACCESS.md](CLOUDFLARE-ACCESS.md). Sections 4–5 below describe the optional legacy shared-password mode only. The new `.env.selfhost.example` defaults to Cloudflare mode; do not overwrite a filled-in environment file with that example.
+
 ## 1. Save your current chart
 
 In the local app, choose **Backup & restore → Save master backup**. Keep this JSON safely on your computer. It contains your latest edits and history. Do not put it in GitHub.
@@ -49,7 +51,7 @@ Open your Supabase SQL editor, then copy and run the contents of [supabase/001_o
 
 This creates only the organization-chart tables and save function. It does **not** reinstall Supabase or change your other apps. The person installing the schema needs database-management access once; HR and approvers do not.
 
-## 4. Configure the app on the server
+## 4. Legacy option: configure shared-password login
 
 From the project folder:
 
@@ -62,13 +64,14 @@ nano .env.selfhost
 
 Fill in these values **on the server only**:
 
-| Setting | What to enter |
-| --- | --- |
-| `APP_ORIGIN` | Exact app address, e.g. your own HTTPS subdomain; no path |
-| `APP_USERNAME` | A shared login name for the people maintaining the chart |
-| `APP_PASSWORD` | A new random password, at least 16 characters |
-| `SUPABASE_URL` | `https://supabase.dalvi.cloud` |
-| `SUPABASE_SERVICE_ROLE_KEY` | Your existing Supabase `SERVICE_ROLE_KEY`, not its anon key |
+| Setting                     | What to enter                                                                       |
+| --------------------------- | ----------------------------------------------------------------------------------- |
+| `APP_AUTH_MODE`             | `basic` for this legacy procedure; use the Cloudflare guide instead for email roles |
+| `APP_ORIGIN`                | Exact app address, e.g. your own HTTPS subdomain; no path                           |
+| `APP_USERNAME`              | A shared login name for the people maintaining the chart                            |
+| `APP_PASSWORD`              | A new random password, at least 16 characters                                       |
+| `SUPABASE_URL`              | `https://supabase.dalvi.cloud`                                                      |
+| `SUPABASE_SERVICE_ROLE_KEY` | Your existing Supabase `SERVICE_ROLE_KEY`, not its anon key                         |
 
 Keep `SUPABASE_ALLOW_HTTP=false`. Keep `BIND_IP=127.0.0.1` when your reverse proxy runs on the host. Keep secrets out of GitHub, browser variables, screenshots and command history. `.env.selfhost` is ignored by Git and by the Docker build. Single-quote values containing `$` or `#` in that file.
 
@@ -118,7 +121,7 @@ Apply a new migration only when a later release explicitly includes one. Routine
 
 ## Who approves, and who needs admin rights?
 
-**Current release: evidence recording, not individual approval accounts.**
+**Cloudflare mode now supports authenticated HR validation and assigned stakeholder approvals.** The signed-in email is verified and permissions are enforced on the server. See [login and roles](CLOUDFLARE-ACCESS.md). The following describes legacy shared-password mode only:
 
 1. Marketing prepares the chart and shares an export with HR.
 2. HR validates the data and provides an email or signed confirmation for the exact version.
@@ -129,7 +132,7 @@ The app marks that version approved only after its required evidence is recorded
 
 No approver should be made a PostgreSQL/Supabase administrator or receive the service-role key. A database administrator installs the schema; that technical role is not the business approver.
 
-If you want people to sign in and press **Approve themselves**, a separate account/permissions feature is needed. Suggested app roles would be admin (manage access), editor (maintain chart), HR validator and assigned approver. Accounts would need server-side verification and approval scopes. Merely adding an `admin` value to a database record will not add this behavior to the current app.
+To let people sign in and approve themselves, switch deliberately to Cloudflare mode using the linked guide. The server email lists control who can edit or approve, and HR assigns emails to required stakeholder entries. Do not add database administrators or distribute a service-role key to business approvers.
 
 ## Troubleshooting
 

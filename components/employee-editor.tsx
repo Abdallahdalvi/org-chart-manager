@@ -20,6 +20,7 @@ export function EmployeeEditor({
   onSave,
   busy,
   actor,
+  actorReadOnly = false,
   onActor,
   saveError,
 }: {
@@ -30,6 +31,7 @@ export function EmployeeEditor({
   onSave: (e: Employee, description: string) => Promise<boolean>;
   busy: boolean;
   actor: string;
+  actorReadOnly?: boolean;
   onActor: (value: string) => void;
   saveError: string;
 }) {
@@ -278,6 +280,7 @@ export function EmployeeEditor({
               id="employee-editor-actor"
               required
               value={actor}
+              readOnly={actorReadOnly}
               maxLength={150}
               onChange={(e) => onActor(e.target.value)}
               placeholder="Your name"

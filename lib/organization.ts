@@ -47,7 +47,13 @@ export const documentSchema = z.object({
   proposals: z.array(z.object({ name: short, roles: s, summary: s })).max(100),
   functions: z.array(z.object({ name: short, summary: s })).max(100),
   approvers: z
-    .array(z.object({ person: short.min(1), role: short.min(1) }))
+    .array(
+      z.object({
+        person: short.min(1),
+        role: short.min(1),
+        email: z.email().max(150).optional(),
+      }),
+    )
     .max(100),
   evidence: z.array(evidenceSchema).max(2000),
   history: z

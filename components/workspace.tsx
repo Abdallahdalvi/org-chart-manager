@@ -1,6 +1,7 @@
 /* oxlint-disable react/react-compiler -- This workspace is not compiled with React Compiler; its optional lint analysis crashes on the nested async loader. Standard hook checks remain enabled. */
+/* oxlint-disable next/no-html-link-for-pages -- Authentication links need full navigation through Cloudflare; the standalone build has no Next router. */
 'use client';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Building2,
   Network,
@@ -60,14 +61,30 @@ import { ImportDialog } from './import-dialog';
 import { ExportDialog } from './export-dialog';
 import { DocumentControl } from './document-control';
 import { Departments } from './departments';
-type Page = 'Organization chart' | 'Employees' | 'Departments' | 'Change log';
+import { AccessReview } from './access-review';
+import { legacySession, type WorkspaceSession } from '@/lib/access';
+type Page =
+  | 'Organization chart'
+  | 'Employees'
+  | 'Departments'
+  | 'Change log'
+  | 'Review & approval';
 const navigation = [
   { icon: Network, label: 'Organization chart' },
   { icon: Users, label: 'Employees' },
   { icon: Layers3, label: 'Departments' },
   { icon: History, label: 'Change log' },
 ] as const;
-export default function Workspace() {
+export default function Workspace({
+  requireSession = false,
+}: {
+  requireSession?: boolean;
+}) {
+  const [session, setSession] = useState<WorkspaceSession | null>(
+    requireSession ? null : legacySession,
+  );
+  const canEdit = !!session?.canEdit;
+  const verified = session?.mode === 'cloudflare';
   const [doc, setDoc] = useState<OrgDocument>(emptyDocument),
     [revision, setRevision] = useState(0),
     [loaded, setLoaded] = useState(false),
@@ -92,22 +109,32 @@ export default function Workspace() {
     >([]);
   const restoreInput = useRef<HTMLInputElement>(null),
     actorInput = useRef<HTMLInputElement>(null),
-    stateRef = useRef({ doc, page });
-  stateRef.current = { doc, page };
+    stateRef = useRef({ doc, page, canEdit });
+  stateRef.current = { doc, page, canEdit };
   const issues = useMemo(() => issuesFor(doc), [doc]),
     status = approvalStatus(doc),
     { all } = activeForest(doc),
     departments = [...new Set(all.map((e) => e.department))].sort(),
     functionalCount = all.reduce((n, e) => n + e.functionalIds.length, 0);
-  useEffect(() => {
+  const load = useCallback(async () => {
     try {
-      setActor(localStorage.getItem('ubiqedge-editor-name') || '');
-    } catch {}
-    void load();
-  }, []);
-  async function load() {
-    try {
-      const r = await fetch('/api/document', { cache: 'no-store' }),
+      if (requireSession) {
+        const response = await fetch('/api/session', {
+          cache: 'no-store',
+          headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        });
+        if (!response.ok)
+          throw new Error(
+            'Sign-in expired or access denied. Reload this page to sign in again.',
+          );
+        const identity = (await response.json()) as WorkspaceSession;
+        setSession(identity);
+        if (identity.mode === 'cloudflare') setActor(identity.email);
+      }
+      const r = await fetch('/api/document', {
+          cache: 'no-store',
+          headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        }),
         data = (await r.json()) as {
           document: OrgDocument;
           revision: number;
@@ -118,16 +145,27 @@ export default function Workspace() {
       setRevision(data.revision);
       setLoaded(true);
       setError('');
-    } catch {
+    } catch (e) {
       setLoaded(false);
       setError(
-        'Your saved chart could not be loaded. Retry to reconnect; no data has been changed.',
+        e instanceof Error
+          ? e.message
+          : 'Your saved chart could not be loaded. Retry to reconnect; no data has been changed.',
       );
     }
-  }
+  }, [requireSession]);
+  useEffect(() => {
+    try {
+      setActor(localStorage.getItem('ubiqedge-editor-name') || '');
+    } catch {}
+    void load();
+  }, [load]);
   useEffect(() => {
     if (page === 'Change log' && loaded)
-      fetch('/api/revisions', { cache: 'no-store' })
+      fetch('/api/revisions', {
+        cache: 'no-store',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      })
         .then(async (r) => {
           const data = await r.json();
           if (!r.ok) throw new Error('Unable to load revisions.');
@@ -190,6 +228,8 @@ export default function Workspace() {
         },
         annotations: { readOnlyHint: false, untrustedContentHint: false },
         execute: async (input: unknown) => {
+          if (!stateRef.current.canEdit)
+            throw new Error('Your account cannot edit this chart.');
           if (
             !input ||
             typeof input !== 'object' ||
@@ -229,6 +269,10 @@ export default function Workspace() {
       actorInput.current?.focus();
       return false;
     }
+    if (['save', 'restore'].includes(String(payload.action)) && !canEdit) {
+      setError('Your account cannot edit or restore this chart.');
+      return false;
+    }
     if (busy) return false;
     setBusy(true);
     setError('');
@@ -236,7 +280,10 @@ export default function Workspace() {
     try {
       const response = await fetch('/api/document', {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+          },
           body: JSON.stringify({ ...payload, revision, actor }),
         }),
         data = (await response.json()) as {
@@ -244,7 +291,11 @@ export default function Workspace() {
           revision: number;
           error: string;
         };
-      if (!response.ok) throw new Error(data.error || 'Unable to save.');
+      if (!response.ok)
+        throw new Error(
+          data.error ||
+            'Unable to save. Your session may have expired; reload to sign in again.',
+        );
       setDoc(documentSchema.parse(data.document));
       setRevision(data.revision);
       setNotice(`Saved to the workspace · v${data.document.version}`);
@@ -263,6 +314,7 @@ export default function Workspace() {
   const save = (next: OrgDocument, description: string) =>
     persist({ action: 'save', document: next, description });
   function updateActor(value: string) {
+    if (verified) return;
     setActor(value);
     try {
       localStorage.setItem('ubiqedge-editor-name', value);
@@ -316,7 +368,12 @@ export default function Workspace() {
         </div>
         <div className="nav-label">WORKSPACE</div>
         <nav>
-          {navigation.map(({ icon: Icon, label }) => (
+          {[
+            ...navigation,
+            ...(verified
+              ? [{ icon: ShieldCheck, label: 'Review & approval' } as const]
+              : []),
+          ].map(({ icon: Icon, label }) => (
             <button
               key={label}
               className={page === label ? 'active' : ''}
@@ -354,7 +411,7 @@ export default function Workspace() {
             </button>
             <button
               onClick={() => restoreInput.current?.click()}
-              disabled={!loaded || busy}
+              disabled={!loaded || busy || !canEdit}
               title="Restore master"
             >
               <FolderOpen size={18} />
@@ -398,18 +455,37 @@ export default function Workspace() {
                   : 'Draft'}{' '}
               · v{doc.version}
             </span>
-            <label htmlFor="workspace-field-1" className="editor-identity">
-              <span>Your name</span>
-              <Input
-                id="workspace-field-1"
-                ref={actorInput}
-                aria-label="Your name for the change log"
-                maxLength={150}
-                value={actor}
-                placeholder="Enter your name"
-                onChange={(e) => updateActor(e.target.value)}
-              />
-            </label>
+            {verified ? (
+              <div className="signed-in-identity">
+                <span>
+                  <strong>{session.email}</strong>
+                  <small>
+                    {session.roles
+                      .map((r) => (r === 'hr' ? 'HR reviewer' : r))
+                      .join(' · ')}
+                  </small>
+                </span>
+                <a
+                  href="/cdn-cgi/access/logout"
+                  title="Signs you out of Cloudflare Access across your apps"
+                >
+                  Sign out
+                </a>
+              </div>
+            ) : (
+              <label htmlFor="workspace-field-1" className="editor-identity">
+                <span>Your name</span>
+                <Input
+                  id="workspace-field-1"
+                  ref={actorInput}
+                  aria-label="Your name for the change log"
+                  maxLength={150}
+                  value={actor}
+                  placeholder="Enter your name"
+                  onChange={(e) => updateActor(e.target.value)}
+                />
+              </label>
+            )}
           </div>
         </header>
         {error && (
@@ -422,6 +498,7 @@ export default function Workspace() {
                 Retry
               </Button>
             )}
+            {requireSession && <a href="/">Sign in / reload</a>}
             <Button
               variant="ghost"
               size="icon"
@@ -454,13 +531,15 @@ export default function Workspace() {
                   ? 'One employee record. Always connected to the right team.'
                   : page === 'Departments'
                     ? 'A clear purpose for every team.'
-                    : 'Who changed what, when—with previous versions kept safely.'}
+                    : page === 'Review & approval'
+                      ? 'Review the current version and sign in with the right permissions.'
+                      : 'Who changed what, when—with previous versions kept safely.'}
             </p>
           </div>
           <div className="actions">
             <Button
               variant="outline"
-              disabled={!loaded || busy}
+              disabled={!loaded || busy || !canEdit}
               onClick={() => {
                 setError('');
                 setImportOpen(true);
@@ -470,7 +549,7 @@ export default function Workspace() {
               Import sheets
             </Button>
             <Button
-              disabled={!loaded || busy}
+              disabled={!loaded || busy || !canEdit}
               onClick={() => {
                 setError('');
                 setEditing({ employee: emptyEmployee(), isNew: true });
@@ -516,6 +595,7 @@ export default function Workspace() {
             department={department}
             setDepartment={setDepartment}
             onEdit={(e) => setEditing({ employee: e, isNew: false })}
+            canEdit={canEdit}
             onExport={() => setExportOpen(true)}
             onDirectory={() => navigate('Employees')}
           />
@@ -628,6 +708,7 @@ export default function Workspace() {
                       <TableCell>
                         <Button
                           variant="ghost"
+                          disabled={!canEdit}
                           onClick={() =>
                             setEditing({ employee: e, isNew: false })
                           }
@@ -653,7 +734,8 @@ export default function Workspace() {
           <Departments
             key={doc.version}
             doc={doc}
-            busy={busy || !loaded}
+            busy={busy || !loaded || !canEdit}
+            canEdit={canEdit}
             onSave={save}
             onView={(d) => {
               setDepartment(d);
@@ -661,6 +743,16 @@ export default function Workspace() {
               setStatusFilter('Active');
               setPage('Employees');
             }}
+          />
+        )}
+        {page === 'Review & approval' && verified && (
+          <AccessReview
+            key={doc.version + doc.evidence.length}
+            doc={doc}
+            session={session}
+            busy={busy || !loaded}
+            error={error}
+            onAction={persist}
           />
         )}
         {page === 'Change log' && (
@@ -723,6 +815,9 @@ export default function Workspace() {
                         try {
                           const response = await fetch(
                             '/api/revisions?revision=' + r.revision,
+                            {
+                              headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                            },
                           );
                           if (!response.ok)
                             throw new Error(
@@ -749,27 +844,31 @@ export default function Workspace() {
                 </p>
               )}
             </details>
-            <details className="surface hr-details">
-              <summary>
-                HR validation & approvals{' '}
-                <span className="muted">
-                  Required by HR · expand when ready
-                </span>
-              </summary>
-              <p className="muted">
-                HR requested these records in sections 5 and 6. They do not stop
-                you editing or downloading a draft. New changes need fresh
-                validation; previous evidence is retained.
-              </p>
-              <DocumentControl
-                key={doc.version + doc.evidence.length}
-                doc={doc}
-                actor={actor}
-                busy={busy || !loaded}
-                onSave={save}
-                onEvidence={(e) => persist({ action: 'evidence', evidence: e })}
-              />
-            </details>
+            {!verified && (
+              <details className="surface hr-details">
+                <summary>
+                  HR validation & approvals{' '}
+                  <span className="muted">
+                    Required by HR · expand when ready
+                  </span>
+                </summary>
+                <p className="muted">
+                  HR requested these records in sections 5 and 6. They do not
+                  stop you editing or downloading a draft. New changes need
+                  fresh validation; previous evidence is retained.
+                </p>
+                <DocumentControl
+                  key={doc.version + doc.evidence.length}
+                  doc={doc}
+                  actor={actor}
+                  busy={busy || !loaded}
+                  onSave={save}
+                  onEvidence={(e) =>
+                    persist({ action: 'evidence', evidence: e })
+                  }
+                />
+              </details>
+            )}
           </div>
         )}
         <div className="workspace-footer">
@@ -790,24 +889,26 @@ export default function Workspace() {
           </span>
         </div>
       </main>
-      {editing && (
+      {editing && canEdit && (
         <EmployeeEditor
           employee={editing.employee}
           isNew={editing.isNew}
           doc={doc}
           busy={busy || !loaded}
           actor={actor}
+          actorReadOnly={verified}
           onActor={updateActor}
           saveError={error}
           onClose={() => setEditing(null)}
           onSave={saveEmployee}
         />
       )}
-      {importOpen && (
+      {importOpen && canEdit && (
         <ImportDialog
           doc={doc}
           busy={busy || !loaded}
           actor={actor}
+          actorReadOnly={verified}
           onActor={updateActor}
           saveError={error}
           onClose={() => setImportOpen(false)}
@@ -833,6 +934,7 @@ export default function Workspace() {
                     <p>{issue.message}</p>
                     <Button
                       variant="outline"
+                      disabled={!canEdit}
                       onClick={() => {
                         const e = doc.employees.find(
                           (e) => e.id === issue.employeeId,
@@ -867,7 +969,7 @@ export default function Workspace() {
           </DialogContent>
         </Dialog>
       )}
-      {restore && (
+      {restore && canEdit && (
         <Dialog open onOpenChange={(open) => !open && setRestore(null)}>
           <DialogContent className="restore-dialog">
             <DialogTitle>Restore master as a new draft?</DialogTitle>
@@ -876,6 +978,8 @@ export default function Workspace() {
               selected backup. The current master remains in saved history.
               Imported evidence is retained as historical references and needs
               fresh validation.
+              {verified &&
+                ' The current HR-controlled reviewer list is kept; backups cannot replace it.'}
             </DialogDescription>
             <p>
               <strong>
@@ -890,6 +994,7 @@ export default function Workspace() {
               <Input
                 id="restore-editor-name"
                 value={actor}
+                readOnly={verified}
                 onChange={(e) => updateActor(e.target.value)}
                 maxLength={150}
               />
@@ -944,6 +1049,7 @@ function Chart({
   onEdit,
   onExport,
   onDirectory,
+  canEdit,
 }: {
   doc: OrgDocument;
   search: string;
@@ -953,6 +1059,7 @@ function Chart({
   onEdit: (e: Employee) => void;
   onExport: () => void;
   onDirectory: () => void;
+  canEdit: boolean;
 }) {
   const { all, roots } = useMemo(() => activeForest(doc), [doc]),
     [expanded, setExpanded] = useState<Set<string>>(new Set()),
@@ -1040,7 +1147,8 @@ function Chart({
           { '--dept': departmentColor(e.department) } as React.CSSProperties
         }
         onClick={() => onEdit(e)}
-        title={`Edit ${e.name}`}
+        disabled={!canEdit}
+        title={`${canEdit ? 'Edit' : 'View'} ${e.name}`}
       >
         <span className="avatar">{initials(e.name)}</span>
         <span className="person-info">
@@ -1159,7 +1267,11 @@ function Chart({
           />
           Functional reporting
         </label>
-        <span>Click a person to edit</span>
+        <span>
+          {canEdit
+            ? 'Click a person to edit'
+            : 'Read-only chart · editing requires an editor role'}
+        </span>
         <Button
           variant="ghost"
           onClick={() => setExpanded(new Set(all.map((e) => e.id)))}

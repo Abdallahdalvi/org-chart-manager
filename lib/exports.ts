@@ -174,8 +174,8 @@ export async function exportExcel(doc: OrgDocument, template = false) {
     );
     add(
       'Required approvers',
-      ['Person', 'Role'],
-      doc.approvers.map((a) => [a.person, a.role]),
+      ['Person', 'Role', 'Assigned login email'],
+      doc.approvers.map((a) => [a.person, a.role, a.email || '']),
     );
     add(
       'Current functions',
