@@ -1,7 +1,8 @@
 import { db } from '@/lib/database';
 import { SITE_ORIGIN } from '@/lib/site-config';
 import { initialDocument } from '@/lib/seed';
-import { documentSchema, evolve, recordEvidence } from '@/lib/organization';
+import { documentSchema } from '@/lib/organization';
+import { prepareChange } from '@/lib/changes';
 import { z } from 'zod';
 export async function GET() {
   try {
@@ -58,36 +59,7 @@ export async function PUT(request: Request) {
     const current = row
       ? documentSchema.parse(JSON.parse(row.data))
       : initialDocument;
-    if (!['save', 'restore', 'evidence'].includes(body.action))
-      throw new Error('Unknown workspace action.');
-    const actor = z.string().trim().min(1).max(150).parse(body.actor);
-    const next =
-      body.action === 'evidence'
-        ? recordEvidence(current, { ...body.evidence, recordedBy: actor })
-        : evolve(
-            current,
-            documentSchema.parse(body.document),
-            actor,
-            String(body.description || ''),
-            true,
-          );
-    if (body.action === 'restore') {
-      const backup = documentSchema.parse(body.document);
-      const prefix = 'backup ' + backup.version + ' / ';
-      next.evidence = [
-        ...current.evidence,
-        ...backup.evidence.map((e) => ({
-          ...e,
-          id: crypto.randomUUID(),
-          version: prefix + e.version,
-        })),
-      ];
-      next.history = [
-        ...next.history,
-        ...backup.history.map((h) => ({ ...h, version: prefix + h.version })),
-      ];
-      documentSchema.parse(next);
-    }
+    const next = prepareChange(current, body);
     const encoded = JSON.stringify(next);
     if (encoded.length > 1500000)
       throw new Error(

@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { FileSpreadsheet, Upload, ArrowRight } from 'lucide-react';
 import {
   Dialog,
@@ -8,75 +8,107 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { NativeSelect } from '@/components/ui/native-select';
+import { Input } from '@/components/ui/input';
 import {
   readSpreadsheet,
-  previewImport,
+  previewBatch,
+  importKind,
   type ImportTable,
-  type ImportPreview,
 } from '@/lib/importer';
 import type { OrgDocument } from '@/lib/model';
 import { download, exportExcel } from '@/lib/exports';
+const kindLabels = {
+  active: 'Active employees',
+  inactive: 'Inactive employees',
+  employees: 'Employee updates',
+  departments: 'Departments / functions',
+};
 export function ImportDialog({
   doc,
   onClose,
   onApply,
   busy,
+  actor,
+  onActor,
+  saveError,
 }: {
   doc: OrgDocument;
   onClose: () => void;
   onApply: (next: OrgDocument, description: string) => Promise<boolean>;
   busy: boolean;
+  actor: string;
+  onActor: (value: string) => void;
+  saveError: string;
 }) {
-  const [tables, setTables] = useState<ImportTable[]>([]),
-    [selected, setSelected] = useState(0),
-    [preview, setPreview] = useState<ImportPreview | null>(null),
-    [error, setError] = useState(''),
-    [reading, setReading] = useState(false);
-  async function choose(file?: File) {
-    if (!file) return;
+  const [tables, setTables] = useState<ImportTable[]>([]);
+  const [selected, setSelected] = useState<number[]>([]);
+  const [mode, setMode] = useState<'proposals' | 'functions'>('proposals');
+  const [error, setError] = useState('');
+  const [reading, setReading] = useState(false);
+  const { preview, previewError } = useMemo(() => {
+    if (!selected.length) return { preview: null, previewError: '' };
+    try {
+      return {
+        preview: previewBatch(
+          doc,
+          selected.map((i) => tables[i]),
+          mode,
+        ),
+        previewError: '',
+      };
+    } catch (e) {
+      return {
+        preview: null,
+        previewError:
+          e instanceof Error ? e.message : 'Could not preview these sheets.',
+      };
+    }
+  }, [doc, tables, selected, mode]);
+  async function choose(files: File[]) {
+    if (!files.length || busy || reading) return;
     setReading(true);
     setError('');
-    setPreview(null);
     setTables([]);
+    setSelected([]);
     try {
-      const read = await readSpreadsheet(file);
+      if (files.length > 10)
+        throw new Error('Select up to 10 files at a time.');
+      const read = (await Promise.all(files.map(readSpreadsheet))).flat();
       if (!read.length)
         throw new Error('No supported employee or department sheets found.');
       setTables(read);
-      setSelected(0);
-      setPreview(previewImport(doc, read[0]));
+      setSelected(read.map((_, i) => i));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'File could not be read.');
     } finally {
       setReading(false);
     }
   }
-  function select(index: number) {
-    setSelected(index);
-    setError('');
-    setPreview(null);
-    try {
-      setPreview(previewImport(doc, tables[index]));
-    } catch (e) {
-      setError(String(e instanceof Error ? e.message : e));
-    }
-  }
+  const hasDepartments = selected.some(
+    (i) => importKind(tables[i]) === 'departments',
+  );
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
+    <Dialog open onOpenChange={(open) => !open && !busy && onClose()}>
       <DialogContent className="import-dialog">
-        <DialogTitle>Import & update your chart</DialogTitle>
+        <DialogTitle>Import spreadsheets</DialogTitle>
         <DialogDescription>
-          Merge by employee ID. Check the changes before applying; existing
-          employees are never removed just because a row is absent.
+          Select active employees, inactive employees, department changes—or all
+          three together. Review the changes, then save once.
         </DialogDescription>
+        <div className="import-types">
+          <span>Active employees</span>
+          <span>Inactive employees</span>
+          <span>Departments</span>
+        </div>
         <div
           role="presentation"
           className="drop-zone"
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => {
             e.preventDefault();
-            void choose(e.dataTransfer.files[0]);
+            void choose(Array.from(e.dataTransfer.files));
           }}
         >
           <span className="upload-icon">
@@ -84,20 +116,24 @@ export function ImportDialog({
           </span>
           <strong>
             {reading
-              ? 'Reading your spreadsheet…'
-              : 'Drop your Excel or CSV file here'}
+              ? 'Reading your files…'
+              : 'Drop one or more Excel / CSV files here'}
           </strong>
-          <span>or click to browse · .xlsx / .csv · up to 5 MB</span>
+          <span>or browse files · .xlsx / .csv · up to 5 MB each</span>
           <input
             type="file"
-            aria-label="Choose an Excel or CSV file"
+            multiple
+            aria-label="Choose Excel or CSV files"
             accept=".xlsx,.csv"
-            onChange={(e) => void choose(e.target.files?.[0])}
+            onChange={(e) => {
+              void choose(Array.from(e.target.files || []));
+              e.target.value = '';
+            }}
             disabled={reading || busy}
           />
         </div>
         <div className="import-hint">
-          <span>Start with the right columns.</span>
+          <span>Your supplied files work as they are.</span>
           <Button
             variant="link"
             onClick={async () => {
@@ -111,34 +147,73 @@ export function ImportDialog({
               }
             }}
           >
-            Download Excel template <ArrowRight size={14} />
+            Excel template <ArrowRight size={14} />
           </Button>
         </div>
-        {tables.length > 1 && (
-          <label>
-            Worksheet
+        {tables.length > 0 && (
+          <section className="import-sheets" aria-label="Sheets to import">
+            <strong>1. Choose sheets</strong>
+            {tables.map((t, i) => (
+              <label
+                key={`${t.source}-${i}`}
+                className="import-sheet"
+                htmlFor={`import-sheet-${i}`}
+              >
+                <Checkbox
+                  id={`import-sheet-${i}`}
+                  disabled={busy}
+                  checked={selected.includes(i)}
+                  onCheckedChange={(checked) =>
+                    setSelected((s) =>
+                      checked
+                        ? [...s, i].sort((a, b) => a - b)
+                        : s.filter((j) => j !== i),
+                    )
+                  }
+                />
+                <span>
+                  <strong>{t.source}</strong>
+                  <small>
+                    {kindLabels[importKind(t)]} · {t.rows.length} rows
+                  </small>
+                </span>
+              </label>
+            ))}
+          </section>
+        )}
+        {hasDepartments && (
+          <label htmlFor="import-department-mode">
+            Use department descriptions as
             <NativeSelect
-              value={selected}
-              onChange={(e) => select(Number(e.target.value))}
+              id="import-department-mode"
+              value={mode}
+              disabled={busy}
+              onChange={(e) => setMode(e.target.value as typeof mode)}
             >
-              {tables.map((t, i) => (
-                <option key={t.name} value={i}>
-                  {t.name}
-                </option>
-              ))}
+              <option value="proposals">
+                Proposals for review (recommended for October changes)
+              </option>
+              <option value="functions">
+                Current department / function descriptions
+              </option>
             </NativeSelect>
+            <small>
+              Neither option moves employees or changes managers. Use employee
+              rows for those changes.
+            </small>
           </label>
         )}
-        {error && (
+        {(error || previewError || saveError) && (
           <p className="error" role="alert">
-            {error}
+            {error || previewError || saveError}
           </p>
         )}
         {preview && (
           <>
+            <strong>2. Review changes</strong>
             <div className="import-stats">
               <span>
-                <b>{preview.added}</b>new people
+                <b>{preview.added}</b>new records
               </span>
               <span>
                 <b>{preview.changed}</b>updates
@@ -149,8 +224,12 @@ export function ImportDialog({
             </div>
             <div className="preview-list">
               {preview.changes.map((c, i) => (
-                <div key={c.id || i}>
-                  <span className={'pill ' + (c.type === 'New' ? 'green' : '')}>
+                <div key={`${c.id}-${i}`}>
+                  <span
+                    className={
+                      'pill ' + (c.type.startsWith('New') ? 'green' : '')
+                    }
+                  >
                     {c.type}
                   </span>
                   <div>
@@ -160,7 +239,12 @@ export function ImportDialog({
                 </div>
               ))}
             </div>
-            <details open>
+            {!preview.added && !preview.changed && (
+              <p className="notice">
+                These records are already up to date. Nothing needs to be saved.
+              </p>
+            )}
+            <details>
               <summary>Import notes ({preview.messages.length})</summary>
               <ul className="import-notes">
                 {preview.messages.map((m, i) => (
@@ -169,14 +253,24 @@ export function ImportDialog({
               </ul>
             </details>
             <p className="muted">
-              Only the selected sheet will be imported. Repeat for other sheets
-              if needed. Excel imports update employee data, not
-              document-control or approval records.
+              Unlisted employees stay in your chart. Inactive people are kept in
+              the employee register, not on the chart. Conflicting statuses go
+              to Data review.
             </p>
+            <label htmlFor="import-editor-name">
+              3. Your name for the change log
+              <Input
+                id="import-editor-name"
+                value={actor}
+                onChange={(e) => onActor(e.target.value)}
+                maxLength={150}
+                placeholder="Your name"
+              />
+            </label>
           </>
         )}
         <div className="form-actions">
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="outline" disabled={busy} onClick={onClose}>
             Cancel
           </Button>
           <Button
@@ -184,6 +278,7 @@ export function ImportDialog({
               !preview ||
               reading ||
               busy ||
+              !actor.trim() ||
               (!preview.added && !preview.changed)
             }
             onClick={async () => {
@@ -191,14 +286,16 @@ export function ImportDialog({
                 preview &&
                 (await onApply(
                   preview.document,
-                  `Imported ${tables[selected].source}: ${preview.added} added, ${preview.changed} updated; absent employees retained.`,
+                  `Imported ${selected.length} sheet(s): ${selected.map((i) => tables[i].source).join('; ')}. ${preview.added} added, ${preview.changed} updated; absent employees retained.`,
                 ))
               )
                 onClose();
             }}
           >
             <Upload size={15} />
-            {busy ? 'Saving…' : 'Apply reviewed changes'}
+            {busy
+              ? 'Saving…'
+              : `Import ${selected.length || ''} selected sheet${selected.length === 1 ? '' : 's'}`}
           </Button>
         </div>
       </DialogContent>

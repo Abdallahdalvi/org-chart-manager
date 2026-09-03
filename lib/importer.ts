@@ -10,7 +10,20 @@ export type ImportTable = {
   name: string;
   source: string;
   rows: Record<string, string>[];
+  rowSources?: string[];
 };
+export type ImportKind = 'active' | 'inactive' | 'employees' | 'departments';
+export function importKind(table: ImportTable): ImportKind {
+  if (
+    Object.keys(table.rows[0] || {}).some(
+      (k) => normalize(k) === 'department / function',
+    )
+  )
+    return 'departments';
+  if (/inactive/i.test(table.source)) return 'inactive';
+  if (/active/i.test(table.source)) return 'active';
+  return 'employees';
+}
 export type ImportPreview = {
   document: OrgDocument;
   added: number;
@@ -98,11 +111,12 @@ const aliases: Record<string, string[]> = {
   status: ['status', 'status- active/ resigned'],
   email: ['email id', 'email'],
   rootConfirmed: ['top level confirmed'],
-  notes: ['notes'],
+  notes: ['notes', 'remarks'],
 };
 export function previewImport(
   current: OrgDocument,
   table: ImportTable,
+  departmentMode: 'proposals' | 'functions' = 'proposals',
 ): ImportPreview {
   if (table.rows.length > 500)
     throw new Error('At most 500 non-empty records are supported per import.');
@@ -118,27 +132,58 @@ export function previewImport(
       (k) => normalize(k) === 'department / function',
     )
   ) {
-    next.proposals = table.rows
-      .map((r) => ({
-        name: r['Department / Function'] || '',
-        roles: r['Positions / Roles'] || '',
-        summary: r.Summary || '',
-      }))
-      .filter((r) => r.name);
+    const seen = new Set<string>();
+    for (const row of table.rows) {
+      const r = Object.fromEntries(
+        Object.entries(row).map(([k, v]) => [normalize(k), v.trim()]),
+      );
+      const proposal = {
+        name: r['department / function'] || '',
+        roles: r['positions / roles'] || '',
+        summary: r.summary || '',
+      };
+      if (!proposal.name) continue;
+      const key = normalize(proposal.name);
+      if (seen.has(key))
+        throw new Error(
+          `Duplicate department ${proposal.name}. Select just one version of each department.`,
+        );
+      seen.add(key);
+      const list =
+        departmentMode === 'functions' ? next.functions : next.proposals;
+      const index = list.findIndex((p) => normalize(p.name) === key);
+      const value =
+        departmentMode === 'functions'
+          ? { name: proposal.name, summary: proposal.summary }
+          : proposal;
+      if (index < 0) {
+        added++;
+        list.push(value as (typeof list)[number]);
+      } else if (JSON.stringify(list[index]) !== JSON.stringify(value)) {
+        changed++;
+        list[index] = value as (typeof list)[number];
+      } else {
+        unchanged++;
+        continue;
+      }
+      changes.push({
+        id: proposal.name,
+        name: proposal.name,
+        type: index < 0 ? 'New department' : 'Department update',
+        detail: `${departmentMode === 'functions' ? 'Current function' : 'Proposal'}: ${proposal.summary}`,
+      });
+    }
     return {
       document: next,
-      added: 0,
-      changed: next.proposals.length,
-      unchanged: 0,
+      added,
+      changed,
+      unchanged,
       messages: [
-        'Department definitions will be saved as proposals. No employee will be moved automatically.',
+        departmentMode === 'functions'
+          ? 'Current function descriptions will be updated. Employee departments and reporting lines stay unchanged.'
+          : 'Department definitions will be saved as proposals. No employee will be moved automatically.',
       ],
-      changes: next.proposals.map((p) => ({
-        id: '',
-        name: p.name,
-        type: 'Proposal',
-        detail: p.summary,
-      })),
+      changes,
     };
   }
   const pending: {
@@ -150,6 +195,7 @@ export function previewImport(
     }[] = [],
     ids = new Set<string>();
   for (let i = 0; i < table.rows.length; i++) {
+    const source = table.rowSources?.[i] || table.source;
     const raw = Object.fromEntries(
       Object.entries(table.rows[i]).map(([k, v]) => [
         normalize(k),
@@ -196,12 +242,12 @@ export function previewImport(
             ? 'Inactive'
             : 'Needs review';
     } else if (!old)
-      e.status = /inactive/i.test(table.source)
+      e.status = /inactive/i.test(source)
         ? 'Needs review'
-        : /active/i.test(table.source)
+        : /active/i.test(source)
           ? 'Active'
           : 'Needs review';
-    if (/inactive/i.test(table.source) && e.status === 'Active') {
+    if (/inactive/i.test(source) && e.status === 'Active') {
       e.status = 'Needs review';
       messages.push(
         `${e.name}: Active status in an inactive sheet; queued for HR review.`,
@@ -239,7 +285,7 @@ export function previewImport(
       );
       e.functionalIds = [];
     }
-    if (!old) e.source = table.source;
+    if (!old) e.source = source;
     pending.push({
       employee: e,
       manager: 'managerReference' in values,
@@ -317,4 +363,45 @@ export function previewImport(
     'Employees absent from this file are retained. To record an exit, explicitly set Status to Inactive.',
   );
   return { document: next, added, changed, unchanged, messages, changes };
+}
+
+/** Resolve selected employee sheets together, including managers on later sheets. */
+export function previewBatch(
+  current: OrgDocument,
+  tables: ImportTable[],
+  departmentMode: 'proposals' | 'functions' = 'proposals',
+): ImportPreview {
+  if (!tables.length) throw new Error('Select at least one sheet.');
+  const employees = tables.filter((t) => importKind(t) !== 'departments');
+  const departments = tables.filter((t) => importKind(t) === 'departments');
+  let result: ImportPreview = {
+    document: structuredClone(current),
+    added: 0,
+    changed: 0,
+    unchanged: 0,
+    messages: [],
+    changes: [],
+  };
+  for (const group of [employees, departments]) {
+    if (!group.length) continue;
+    const next = previewImport(
+      result.document,
+      {
+        name: 'Selected sheets',
+        source: 'Selected sheets',
+        rows: group.flatMap((t) => t.rows),
+        rowSources: group.flatMap((t) => t.rows.map(() => t.source)),
+      },
+      departmentMode,
+    );
+    result = {
+      document: next.document,
+      added: result.added + next.added,
+      changed: result.changed + next.changed,
+      unchanged: result.unchanged + next.unchanged,
+      messages: [...result.messages, ...next.messages],
+      changes: [...result.changes, ...next.changes],
+    };
+  }
+  return result;
 }

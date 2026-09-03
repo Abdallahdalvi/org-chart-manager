@@ -104,7 +104,7 @@ export function DocumentControl({
   return (
     <div className="content-page">
       <div className="section-intro">
-        <h2>A controlled, reviewable source of truth</h2>
+        <h2>HR records</h2>
         <p>
           Marketing maintains the master. HR validates the data. Executives and
           department heads approve their areas.
@@ -146,7 +146,11 @@ export function DocumentControl({
               .map(([label, value]) => (
                 <div key={label}>
                   <dt>{label}</dt>
-                  <dd>{value}</dd>
+                  <dd>
+                    {/date/i.test(label) && Number.isFinite(Date.parse(value))
+                      ? new Date(value).toLocaleDateString('en-GB')
+                      : value}
+                  </dd>
                 </div>
               ))}
           </dl>

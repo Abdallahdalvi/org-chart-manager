@@ -1,0 +1,12 @@
+node_modules
+.git
+.env*
+.wrangler
+dist
+selfhost-dist
+.test-output
+outputs
+work
+*.tar.gz
+*.tgz
+*.tsbuildinfo

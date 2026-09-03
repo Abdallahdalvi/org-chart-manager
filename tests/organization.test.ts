@@ -13,7 +13,12 @@ import {
   documentSchema,
   descendantIds,
 } from '../lib/organization';
-import { previewImport, readSpreadsheet } from '../lib/importer';
+import {
+  previewImport,
+  previewBatch,
+  readSpreadsheet,
+  importKind,
+} from '../lib/importer';
 import { chartLayout, chartSvg } from '../lib/chart-layout';
 import {
   exportExcel,
@@ -159,8 +164,74 @@ check('Department proposal does not reassign anyone', () => {
     ],
   });
   assert.deepEqual(p.document.employees, doc.employees);
-  assert.equal(p.document.proposals[0].name, 'New Division');
+  assert.equal(p.document.proposals.at(-1)!.name, 'New Division');
+  assert.equal(p.document.proposals.length, doc.proposals.length + 1);
 });
+check(
+  'Department proposals merge without deleting omitted definitions; repeated import is a no-op',
+  () => {
+    const table = {
+      name: 'Departments',
+      source: 'October.csv',
+      rows: [
+        {
+          'department / function': 'A new function',
+          'positions / roles': 'Manager',
+          summary: 'Responsibilities',
+        },
+      ],
+    };
+    const first = previewImport(doc, table);
+    const second = previewImport(first.document, table);
+    assert.equal(first.added, 1);
+    assert.equal(second.added + second.changed, 0);
+    assert.equal(second.unchanged, 1);
+    const live = previewImport(doc, table, 'functions');
+    assert(live.document.functions.some((f) => f.name === 'A new function'));
+    assert.deepEqual(live.document.employees, doc.employees);
+    assert.deepEqual(live.document.proposals, doc.proposals);
+  },
+);
+check(
+  'Batch imports resolve a manager on a later sheet and reject conflicting duplicate IDs',
+  () => {
+    const one = {
+      name: 'Team',
+      source: 'Active team.csv',
+      rows: [
+        {
+          'Employee ID': 'BATCH1',
+          'Full Name': 'Batch Person',
+          Designation: 'Engineer',
+          Department: 'Software',
+          'Reporting Manager': 'Batch Manager',
+          Status: 'Active',
+        },
+      ],
+    };
+    const two = {
+      name: 'Manager',
+      source: 'Active managers.csv',
+      rows: [
+        {
+          'Employee ID': 'BATCH2',
+          'Full Name': 'Batch Manager',
+          Designation: 'Manager',
+          Department: 'Software',
+          'Manager ID': '25',
+          Status: 'Active',
+        },
+      ],
+    };
+    const batch = previewBatch(doc, [one, two]);
+    assert.equal(
+      batch.document.employees.find((e) => e.id === 'BATCH1')!.managerId,
+      'BATCH2',
+    );
+    assert.equal(batch.added, 2);
+    assert.throws(() => previewBatch(doc, [one, one]), /Duplicate/);
+  },
+);
 const clean: OrgDocument = structuredClone(doc);
 clean.employees = clean.employees
   .filter((e) => e.status !== 'Needs review')
@@ -321,6 +392,56 @@ assert.equal(original[0].rows.length, 54);
 passed++;
 console.log(
   'PASS Original CSV ignores hundreds of blank rows but preserves incomplete Ashish row',
+);
+const inactiveFile = await readFile(
+  'C:/Users/CoreX/Downloads/Ubiqedge Organization chart data(Inactive Emp).csv',
+);
+const deptFile = await readFile(
+  'C:/Users/CoreX/Downloads/Ubiqedge Organization chart data(Departments for oct changes).csv',
+);
+const inactiveTables = await readSpreadsheet(
+  new File([inactiveFile], 'Inactive Emp.csv'),
+);
+const departmentTables = await readSpreadsheet(
+  new File([deptFile], 'Departments for oct changes.csv'),
+);
+check(
+  'All three actual supplied sheet types import together, preserving exits, review conflicts and proposals',
+  () => {
+    assert.equal(importKind(inactiveTables[0]), 'inactive');
+    assert.equal(importKind(departmentTables[0]), 'departments');
+    const combined = previewBatch(doc, [
+      ...original,
+      ...inactiveTables,
+      ...departmentTables,
+    ]);
+    assert.equal(combined.document.employees.length, 59);
+    assert.equal(
+      combined.document.employees.filter((e) => e.status === 'Inactive').length,
+      3,
+    );
+    assert.equal(
+      combined.document.employees.find((e) => e.id === '21')!.status,
+      'Needs review',
+    );
+    assert.equal(
+      combined.document.employees.find((e) => e.id === '49')!.status,
+      'Needs review',
+    );
+    assert.match(
+      combined.document.employees.find((e) => e.id === '41')!.notes,
+      /Absconded/,
+    );
+    assert.equal(combined.document.proposals.length, 10);
+    assert.equal(
+      previewBatch(combined.document, [
+        ...original,
+        ...inactiveTables,
+        ...departmentTables,
+      ]).changed,
+      0,
+    );
+  },
 );
 for (const [ext, blob] of [
   ['pdf', await exportPdf(doc)],

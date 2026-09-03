@@ -138,7 +138,7 @@ export function Departments({
       </section>
       <section className="surface">
         <div className="section-title">
-          <h3>October department proposals</h3>
+          <h3>Department change proposals</h3>
           <span className="pill">Reference only · not applied</span>
         </div>
         <p className="muted">

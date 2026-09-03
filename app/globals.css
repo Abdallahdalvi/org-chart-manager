@@ -1,6 +1,102 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
+
+.company-brand {
+  justify-content: center;
+  padding: 0;
+}
+.company-brand img {
+  width: 172px;
+  height: auto;
+  object-fit: contain;
+  background: #fff;
+  border-radius: 6px;
+}
+.sidebar-tools {
+  margin-top: 14px;
+  font-size: 12px;
+  color: #61716b;
+}
+.sidebar-tools summary {
+  padding: 9px 12px;
+}
+.sidebar-tools nav {
+  margin-top: 8px;
+}
+.import-types {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.import-types span {
+  padding: 6px 10px;
+  background: #eef4f1;
+  border-radius: 5px;
+  color: #315c50;
+  font-size: 12px;
+}
+.import-sheets {
+  display: grid;
+  gap: 10px;
+}
+.import-sheet {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid #e1e7e4;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.import-sheet > span {
+  min-width: 0;
+}
+.import-sheet strong {
+  display: block;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.import-sheet small {
+  display: block;
+  color: #61716b;
+  margin-top: 4px;
+}
+.hr-details > summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+.hr-details > summary::before {
+  content: '+';
+  font-size: 20px;
+}
+.hr-details[open] > summary::before {
+  content: '−';
+}
+.hr-details > summary > span {
+  font-size: 12px;
+  font-weight: normal;
+}
+.hr-details .content-page {
+  padding: 18px 0 0;
+}
+.surface > summary {
+  font-weight: 600;
+}
+.surface[open] > summary {
+  margin-bottom: 18px;
+}
+@media (max-width: 700px) {
+  .company-brand img {
+    width: 94px;
+    height: 67px;
+  }
+  .sidebar-tools {
+    margin-top: 0;
+  }
+}
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -23,7 +119,7 @@
   --primary-foreground: #fff;
   --border: #e1e7e4;
   --muted: #f2f5f2;
-  --muted-foreground: #798682;
+  --muted-foreground: #61716b;
   --radius: 0.55rem;
 }
 * {
@@ -1492,6 +1588,13 @@ table .pill {
   }
   .sidebar nav:last-of-type {
     display: none;
+  }
+  .sidebar .sidebar-tools nav {
+    display: flex;
+  }
+  .sidebar .sidebar-tools nav span {
+    display: inline;
+    font-size: 11px;
   }
   .brand {
     justify-content: center;

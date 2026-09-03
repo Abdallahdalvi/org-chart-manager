@@ -2,19 +2,23 @@
 
 A private, database-backed organizational chart workspace. Supplied CSVs are normalized into the initial source document; the originals are not modified.
 
+**Deploy from GitHub:** follow [GITHUB-TO-CASAOS.md](GITHUB-TO-CASAOS.md) for the first installation, private-repository access, Supabase setup and later updates. The guide also explains who approves and why business approvers do not need database-admin rights.
+
 ## Using the tool
 
-1. Enter your name in the top bar for the change log. This is a recorded name, not identity verification.
+1. Enter your name in the top bar or directly in the edit/import form for the change log. This is a recorded name, not identity verification.
 2. Resolve the seven initial Data review items: four unspecified executive reporting lines, the Active/Intern records on the inactive tab, and the incomplete Ashish record.
-3. Import CSV/XLSX and review the diff before applying. Employee IDs are stable keys. Absent rows are retained; use an explicit Inactive status to record exits. Keep Manager ID and Functional Manager IDs in future files to avoid ambiguous name matching.
+3. Use **Import sheets** to select one or more CSV/XLSX files or workbook tabs together, including Active Emp, Inactive Emp, and Departments for oct changes. Preview all changes before one save. Employee IDs are stable keys; duplicate IDs across selected sheets are blocked. Absent rows are retained. Conflicting inactive-sheet statuses go to review. Department definitions can be saved as proposals (default) or current function descriptions, without moving employees or changing managers.
 4. Click any employee to edit, add a joiner manually, change direct/functional managers, or mark an exit after reassigning active reports. Cycles and duplicate IDs are blocked.
-5. Confirm function definitions and required stakeholders under Document control. October functions remain proposals until people are explicitly assigned.
+5. Use Departments for functions, and **Change log → HR validation & approvals** for the collapsed HR records. HR explicitly requested validation, stakeholder approvals and evidence in sections 5–6; these records are retained but kept out of the everyday chart workflow. October functions remain proposals until explicitly applied; employee assignments are never guessed.
 6. Record actual HR validation evidence, then approvals from each configured stakeholder. These are evidence references, not digital signatures or an email workflow. Keep the originals in your official HR archive.
 7. Download a JSON master backup and PDF/Word/PowerPoint/Excel/SVG exports. Structural changes create a new draft; historical evidence remains available. Restoring a backup creates a new draft and archives imported approval references.
 
 ## Persistence and access
 
-The D1 workspace is authoritative; browser storage contains only the editor-name preference. Every confirmed change uses a compare-and-swap revision check and saves a database snapshot. Multiple tabs cannot silently overwrite one another. Download a master backup for independent recovery and handover. The review date tracks the monthly due date but does not send reminders.
+For your own Supabase/CasaOS deployment, follow [SELF-HOSTING.md](SELF-HOSTING.md). The existing `npm run dev` preview continues to use its local D1 database and preserves your edits. The standalone `build:selfhost`/`start:selfhost` path uses Supabase, runs without Cloudflare/Sites, and protects pages and APIs with a server-configured password. No live server deployment has been completed yet.
+
+The selected backend (local/Sites D1 or self-hosted Supabase) is authoritative; browser storage contains only the editor-name preference. Every confirmed change uses a compare-and-swap revision check and saves a database snapshot. Multiple tabs cannot silently overwrite one another. Download a master backup for independent recovery and handover. The review date tracks the monthly due date but does not send reminders.
 
 This deployment is owner-only through Sites. There are no application-level viewer/editor roles. Do not make the site public or share it with read-only reviewers: anyone with site access can edit and see employee data. Give reviewers exported documents unless role-based access is added. Approval identities are self-reported; genuine evidence must be verified outside the application.
 

@@ -1,0 +1,29 @@
+name: ubiqedge-org-chart
+services:
+  org-chart:
+    build:
+      context: .
+      dockerfile: Dockerfile.casaos
+    image: ubiqedge-org-chart:local
+    restart: unless-stopped
+    ports:
+      - '${BIND_IP:-127.0.0.1}:${APP_PORT:-3080}:3080'
+    environment:
+      APP_ORIGIN: ${APP_ORIGIN:?Set APP_ORIGIN}
+      APP_USERNAME: ${APP_USERNAME:?Set APP_USERNAME}
+      APP_PASSWORD: ${APP_PASSWORD:?Set APP_PASSWORD}
+      SUPABASE_URL: ${SUPABASE_URL:?Set SUPABASE_URL}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:?Set SUPABASE_SERVICE_ROLE_KEY}
+      SUPABASE_ALLOW_HTTP: ${SUPABASE_ALLOW_HTTP:-false}
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'

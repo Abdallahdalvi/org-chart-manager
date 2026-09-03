@@ -6,7 +6,6 @@ import {
   Network,
   Users,
   Layers3,
-  FileCheck2,
   History,
   Upload,
   Plus,
@@ -41,7 +40,7 @@ import {
   TableRow,
   TableCell,
 } from '@/components/ui/table';
-import { initialDocument } from '@/lib/seed';
+import { emptyDocument } from '@/lib/empty-document';
 import {
   initials,
   departmentColor,
@@ -61,21 +60,15 @@ import { ImportDialog } from './import-dialog';
 import { ExportDialog } from './export-dialog';
 import { DocumentControl } from './document-control';
 import { Departments } from './departments';
-type Page =
-  | 'Organization chart'
-  | 'Employees'
-  | 'Departments'
-  | 'Document control'
-  | 'Change log';
+type Page = 'Organization chart' | 'Employees' | 'Departments' | 'Change log';
 const navigation = [
   { icon: Network, label: 'Organization chart' },
   { icon: Users, label: 'Employees' },
   { icon: Layers3, label: 'Departments' },
-  { icon: FileCheck2, label: 'Document control' },
   { icon: History, label: 'Change log' },
 ] as const;
 export default function Workspace() {
-  const [doc, setDoc] = useState<OrgDocument>(initialDocument),
+  const [doc, setDoc] = useState<OrgDocument>(emptyDocument),
     [revision, setRevision] = useState(0),
     [loaded, setLoaded] = useState(false),
     [busy, setBusy] = useState(false),
@@ -128,7 +121,7 @@ export default function Workspace() {
     } catch {
       setLoaded(false);
       setError(
-        'The saved workspace could not be loaded. The source preview is read-only until the connection is restored. Retry to continue.',
+        'Your saved chart could not be loaded. Retry to reconnect; no data has been changed.',
       );
     }
   }
@@ -269,6 +262,12 @@ export default function Workspace() {
   }
   const save = (next: OrgDocument, description: string) =>
     persist({ action: 'save', document: next, description });
+  function updateActor(value: string) {
+    setActor(value);
+    try {
+      localStorage.setItem('ubiqedge-editor-name', value);
+    } catch {}
+  }
   async function saveEmployee(e: Employee, description: string) {
     const employees = editing?.isNew
       ? [...doc.employees, e]
@@ -305,21 +304,15 @@ export default function Workspace() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand">
-          <span className="brand-mark">
-            <Network size={22} />
-          </span>
-          <span>
-            ubiqedge<span className="brand-dot">.</span>
-            <small>PEOPLE & STRUCTURE</small>
-          </span>
-        </div>
-        <div className="workspace">
-          <Building2 size={17} />
-          <span>
-            {doc.company} workspace<small>Marketing team</small>
-          </span>
-          <ChevronDown size={14} />
+        <div className="brand company-brand">
+          {/* Native image is shared with the standalone CasaOS build, which has no Next image runtime. */}
+          {/* oxlint-disable-next-line next/no-img-element */}
+          <img
+            src="/ubiqedge-logo.jpg"
+            width="180"
+            height="129"
+            alt="Ubiqedge Technology Pvt Ltd"
+          />
         </div>
         <div className="nav-label">WORKSPACE</div>
         <nav>
@@ -336,7 +329,7 @@ export default function Workspace() {
             </button>
           ))}
         </nav>
-        <div className="nav-label">QUALITY & HANDOVER</div>
+        <div className="nav-label">TOOLS</div>
         <nav>
           <button onClick={() => setReviewOpen(true)} title="Data review">
             <ShieldCheck size={18} />
@@ -345,24 +338,30 @@ export default function Workspace() {
               {issues.length}
             </small>
           </button>
-          <button
-            onClick={() =>
-              download(JSON.stringify(doc, null, 2), filename(doc, 'json'))
-            }
-            title="Save master backup"
-          >
-            <Download size={18} />
-            <span>Save master backup</span>
-          </button>
-          <button
-            onClick={() => restoreInput.current?.click()}
-            disabled={!loaded || busy}
-            title="Restore master"
-          >
-            <FolderOpen size={18} />
-            <span>Restore master</span>
-          </button>
         </nav>
+        <details className="sidebar-tools">
+          <summary>Backup & restore</summary>
+          <nav>
+            <button
+              onClick={() =>
+                download(JSON.stringify(doc, null, 2), filename(doc, 'json'))
+              }
+              title="Save master backup"
+              disabled={!loaded || busy}
+            >
+              <Download size={18} />
+              <span>Save master backup</span>
+            </button>
+            <button
+              onClick={() => restoreInput.current?.click()}
+              disabled={!loaded || busy}
+              title="Restore master"
+            >
+              <FolderOpen size={18} />
+              <span>Restore master</span>
+            </button>
+          </nav>
+        </details>
         <input
           ref={restoreInput}
           type="file"
@@ -376,9 +375,9 @@ export default function Workspace() {
         <div className="sidebar-bottom">
           <ShieldCheck size={18} />
           <div>
-            Controlled by design
-            <small>Monthly review + significant changes</small>
-            <small>Private workspace · export for handover</small>
+            Editable company chart
+            <small>Import → review → save</small>
+            <small>Changes are recorded automatically</small>
           </div>
         </div>
       </aside>
@@ -408,15 +407,7 @@ export default function Workspace() {
                 maxLength={150}
                 value={actor}
                 placeholder="Enter your name"
-                onChange={(e) => {
-                  setActor(e.target.value);
-                  try {
-                    localStorage.setItem(
-                      'ubiqedge-editor-name',
-                      e.target.value,
-                    );
-                  } catch {}
-                }}
+                onChange={(e) => updateActor(e.target.value)}
               />
             </label>
           </div>
@@ -455,7 +446,6 @@ export default function Workspace() {
         )}
         <section className="page-heading">
           <div>
-            <span className="eyebrow">PEOPLE, CONNECTED</span>
             <h1>{page}</h1>
             <p>
               {page === 'Organization chart'
@@ -464,25 +454,27 @@ export default function Workspace() {
                   ? 'One employee record. Always connected to the right team.'
                   : page === 'Departments'
                     ? 'A clear purpose for every team.'
-                    : page === 'Document control'
-                      ? 'From working draft to validated, approved company record.'
-                      : 'Every meaningful change, with its owner and saved version.'}
+                    : 'Who changed what, when—with previous versions kept safely.'}
             </p>
           </div>
           <div className="actions">
             <Button
               variant="outline"
               disabled={!loaded || busy}
-              onClick={() => setImportOpen(true)}
+              onClick={() => {
+                setError('');
+                setImportOpen(true);
+              }}
             >
               <Upload />
-              Import Excel
+              Import sheets
             </Button>
             <Button
               disabled={!loaded || busy}
-              onClick={() =>
-                setEditing({ employee: emptyEmployee(), isNew: true })
-              }
+              onClick={() => {
+                setError('');
+                setEditing({ employee: emptyEmployee(), isNew: true });
+              }}
             >
               <Plus />
               Add employee
@@ -671,16 +663,6 @@ export default function Workspace() {
             }}
           />
         )}
-        {page === 'Document control' && (
-          <DocumentControl
-            key={doc.version + doc.evidence.length}
-            doc={doc}
-            actor={actor}
-            busy={busy || !loaded}
-            onSave={save}
-            onEvidence={(e) => persist({ action: 'evidence', evidence: e })}
-          />
-        )}
         {page === 'Change log' && (
           <div className="content-page">
             <section className="surface">
@@ -692,9 +674,8 @@ export default function Workspace() {
                 </Button>
               </div>
               <p className="muted">
-                Structural and document-setting changes increment the version
-                and clear current validation/approval. Historical approval
-                evidence is retained.
+                Every saved edit includes a version, date, description, and the
+                person who updated it.
               </p>
               <Table>
                 <TableHeader>
@@ -721,8 +702,8 @@ export default function Workspace() {
                 </TableBody>
               </Table>
             </section>
-            <section className="surface">
-              <h3>Saved master versions</h3>
+            <details className="surface">
+              <summary>Previous versions & recovery</summary>
               <p className="muted">
                 Each successful save is stored as a separate snapshot. Download
                 an earlier snapshot for reference or restore it as a new draft.
@@ -767,7 +748,28 @@ export default function Workspace() {
                   Your first saved edit will create the first stored snapshot.
                 </p>
               )}
-            </section>
+            </details>
+            <details className="surface hr-details">
+              <summary>
+                HR validation & approvals{' '}
+                <span className="muted">
+                  Required by HR · expand when ready
+                </span>
+              </summary>
+              <p className="muted">
+                HR requested these records in sections 5 and 6. They do not stop
+                you editing or downloading a draft. New changes need fresh
+                validation; previous evidence is retained.
+              </p>
+              <DocumentControl
+                key={doc.version + doc.evidence.length}
+                doc={doc}
+                actor={actor}
+                busy={busy || !loaded}
+                onSave={save}
+                onEvidence={(e) => persist({ action: 'evidence', evidence: e })}
+              />
+            </details>
           </div>
         )}
         <div className="workspace-footer">
@@ -794,6 +796,9 @@ export default function Workspace() {
           isNew={editing.isNew}
           doc={doc}
           busy={busy || !loaded}
+          actor={actor}
+          onActor={updateActor}
+          saveError={error}
           onClose={() => setEditing(null)}
           onSave={saveEmployee}
         />
@@ -802,6 +807,9 @@ export default function Workspace() {
         <ImportDialog
           doc={doc}
           busy={busy || !loaded}
+          actor={actor}
+          onActor={updateActor}
+          saveError={error}
           onClose={() => setImportOpen(false)}
           onApply={save}
         />
@@ -877,12 +885,26 @@ export default function Workspace() {
               {restore.employees.length} employee records ·{' '}
               {restore.history.length} history entries
             </p>
+            <label htmlFor="restore-editor-name">
+              Your name for the change log
+              <Input
+                id="restore-editor-name"
+                value={actor}
+                onChange={(e) => updateActor(e.target.value)}
+                maxLength={150}
+              />
+            </label>
+            {error && (
+              <p className="error" role="alert">
+                {error}
+              </p>
+            )}
             <div className="form-actions">
               <Button variant="outline" onClick={() => setRestore(null)}>
                 Cancel
               </Button>
               <Button
-                disabled={busy || !loaded}
+                disabled={busy || !loaded || !actor.trim()}
                 onClick={async () => {
                   if (
                     await persist({

@@ -19,6 +19,9 @@ export function EmployeeEditor({
   onClose,
   onSave,
   busy,
+  actor,
+  onActor,
+  saveError,
 }: {
   employee: Employee;
   doc: OrgDocument;
@@ -26,6 +29,9 @@ export function EmployeeEditor({
   onClose: () => void;
   onSave: (e: Employee, description: string) => Promise<boolean>;
   busy: boolean;
+  actor: string;
+  onActor: (value: string) => void;
+  saveError: string;
 }) {
   const [form, setForm] = useState(employee),
     [reason, setReason] = useState(''),
@@ -101,8 +107,8 @@ export function EmployeeEditor({
       <DialogContent className="editor-dialog">
         <DialogTitle>{isNew ? 'Add employee' : 'Edit employee'}</DialogTitle>
         <DialogDescription>
-          Update the existing chart. Changes create a new draft version and
-          require fresh validation.
+          Save changes to this person in the existing chart. The change log
+          updates automatically.
         </DialogDescription>
         <form onSubmit={submit} className="editor-form">
           <div className="form-grid">
@@ -266,9 +272,20 @@ export function EmployeeEditor({
               {employee.sourceStatus || 'Not supplied'}
             </p>
           )}
-          {error && (
+          <label htmlFor="employee-editor-actor">
+            Your name for the change log
+            <Input
+              id="employee-editor-actor"
+              required
+              value={actor}
+              maxLength={150}
+              onChange={(e) => onActor(e.target.value)}
+              placeholder="Your name"
+            />
+          </label>
+          {(error || saveError) && (
             <p className="error" role="alert">
-              {error}
+              {error || saveError}
             </p>
           )}
           <div className="form-actions">
