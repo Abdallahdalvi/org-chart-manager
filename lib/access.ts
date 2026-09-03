@@ -28,7 +28,9 @@ export function emailSession(
     mode: 'cloudflare',
     email,
     roles,
-    canEdit: roles.includes('editor'),
+    // HR owns the organizational record end-to-end: employee maintenance,
+    // imports, validation, approval evidence and reviewer settings.
+    canEdit: roles.includes('editor') || roles.includes('hr'),
     canValidate: roles.includes('hr'),
     canApprove: roles.includes('hr') || roles.includes('approver'),
     canManageApprovers: roles.includes('hr'),

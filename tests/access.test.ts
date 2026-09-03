@@ -98,7 +98,7 @@ assert(
     !editor.canValidate &&
     !editor.canManageApprovers,
 );
-assert(hr.canValidate && hr.canApprove && hr.canManageApprovers && !hr.canEdit);
+assert(hr.canEdit && hr.canValidate && hr.canApprove && hr.canManageApprovers);
 assert(
   approver.canApprove &&
     !approver.canValidate &&
@@ -207,14 +207,22 @@ assert.throws(
 );
 for (const action of ['save', 'restore']) {
   assert.throws(
-    () => authorizedChange(doc, { action, document: doc }, hr),
-    /permission/,
-  );
-  assert.throws(
     () => authorizedChange(doc, { action, document: doc }, approver),
     /permission/,
   );
 }
+const hrSaved = authorizedChange(
+  doc,
+  {
+    action: 'save',
+    actor: 'hr@example.com',
+    document: { ...doc, company: 'HR-maintained chart' },
+    description: 'HR updated the master chart',
+  },
+  hr,
+);
+assert.equal(hrSaved.updatedBy, 'hr@example.com');
+assert.equal(hrSaved.company, 'HR-maintained chart');
 for (const action of [
   'save',
   'restore',
